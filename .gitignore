@@ -1,0 +1,15 @@
+.env
+node_modules/
+
+# Generated trial workspace and logs
+project_scripts/minimum_dry_run/sample_workspace/
+
+# Local/generated CSV outputs
+*.csv
+
+# Local accidental command output
+node
+
+# OS/editor noise
+.DS_Store
+Thumbs.db

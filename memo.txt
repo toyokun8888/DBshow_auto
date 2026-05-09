@@ -1,0 +1,52 @@
+
+前提：あなたの手元にあるもの
+
+C:\fc2_output\
+  sellers_20250424120000.csv      ← 1回目に取得したCSV
+  sellers_20250425090000.csv      ← 2回目に取得したCSV（重複あるかも）
+  seller_names_20250424120000.csv
+  seller_names_20250425090000.csv
+  master_20250424120000.csv
+  master_20250425090000.csv
+  import_sellers.sql              ← さっき保存したSQLファイル
+  import_seller_names.sql
+  import_master.sql
+
+
+
+1回目の投入（初回・\copyで高速投入）
+CMDにそのまま貼り付けて実行するだけです
+
+psql -h localhost -U postgres -d fc2db -c "\copy sellers(id,seller_id,index_path,registered_at) FROM 'C:\fc2_output\sellers_20260428124501.csv' WITH (FORMAT csv, HEADER true, ENCODING 'UTF8')"
+
+psql -h localhost -U postgres -d fc2db -c "\copy seller_names(id,seller_id,seller_name,index_path,registered_at) FROM 'C:\fc2_output\seller_names_20260428124501.csv' WITH (FORMAT csv, HEADER true, ENCODING 'UTF8')"
+
+psql -h localhost -U postgres -d fc2db -c "\copy master(product_id,title,seller_id) FROM 'C:\fc2_output\master_20260425060809.csv' WITH (FORMAT csv, HEADER true, ENCODING 'UTF8')"
+
+
+
+2回目以降の投入（重複スキップ）
+① メモ帳で import_sellers.sql を開いてファイル名を変更して保存
+
+SQL
+-- ここを2回目のファイル名に変える
+FROM 'C:\fc2_output\sellers_20250425090000.csv'
+
+② CMDで実行
+psql -h localhost -U postgres -d fc2db -f "C:\fc2_output\import_sellers.sql"
+
+③ seller_names も同じ手順
+import_seller_names.sql をメモ帳で開いて：
+SQL
+FROM 'C:\fc2_output\seller_names_20250425090000.csv'
+
+psql -h localhost -U postgres -d fc2db -f "C:\fc2_output\import_seller_names.sql"
+
+
+//ここよく使う
+④ master も同じ手順
+import_master.sql をメモ帳で開いて：
+SQL
+FROM 'C:\fc2_output\master_20250425090000.csv'
+に変えて保存 → CMD実行
+psql -h localhost -U postgres -d fc2db -f "C:\fc2_output\import_master.sql"
