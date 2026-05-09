@@ -3,6 +3,7 @@ node_modules/
 
 # Generated trial workspace and logs
 project_scripts/minimum_dry_run/sample_workspace/
+project_scripts/staging_watcher/sample_workspace/
 
 # Local/generated CSV outputs
 *.csv
