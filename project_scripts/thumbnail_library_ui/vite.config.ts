@@ -1,4 +1,5 @@
 import fs from "fs";
+import os from "os";
 import path from "path";
 import { spawn } from "child_process";
 import { Client } from "pg";
@@ -8,6 +9,7 @@ import react from "@vitejs/plugin-react";
 const PROJECT_ROOT = path.resolve(__dirname, "..", "..");
 const ENV_PATH = path.resolve(PROJECT_ROOT, ".env");
 const EXPLORER_EXE = "C:\\Windows\\explorer.exe";
+const MPC_BE_ALIAS_NAME = "mpc-be.exe";
 
 type LibraryRow = {
   owned_file_id: number | null;
@@ -24,6 +26,12 @@ type LibraryRow = {
 type OpenPathRequest = {
   ownedFileId?: number | string | null;
   productId?: string | null;
+};
+
+type OpenPathResolution = {
+  current_path: string;
+  product_id: string;
+  current_file_name: string | null;
 };
 
 function loadEnvFile() {
@@ -192,9 +200,9 @@ async function resolveCurrentPath(payload: OpenPathRequest): Promise<string | nu
   try {
     if (hasOwnedFileId) {
       if (!ownedFileId || !Number.isFinite(ownedFileId)) return null;
-      const byId = await client.query<{ current_path: string }>(
+      const byId = await client.query<OpenPathResolution>(
         `
-          SELECT current_path
+          SELECT current_path, product_id::text, current_file_name
           FROM public.xxx_tm002_owned_files
           WHERE id = $1
           LIMIT 1
@@ -202,7 +210,7 @@ async function resolveCurrentPath(payload: OpenPathRequest): Promise<string | nu
         [ownedFileId]
       );
       if (!byId.rows[0]?.current_path) return null;
-      return normalizeWindowsPath(byId.rows[0].current_path);
+      return resolveExistingMediaPath(byId.rows[0]);
     }
 
     // For open operations, do not fallback by productId.
@@ -213,6 +221,72 @@ async function resolveCurrentPath(payload: OpenPathRequest): Promise<string | nu
   } finally {
     await client.end();
   }
+}
+
+function resolveExistingMediaPath(row: OpenPathResolution): string {
+  const normalized = normalizeWindowsPath(row.current_path);
+  if (!isPathAllowed(normalized)) return normalized;
+  if (fs.existsSync(normalized)) return normalized;
+
+  const folderPath = path.dirname(normalized);
+  if (!fs.existsSync(folderPath)) return normalized;
+
+  const productId = String(row.product_id || "").trim();
+  const expectedFileName = row.current_file_name || path.basename(normalized);
+  const expectedLoose = normalizeFileNameForLookup(expectedFileName);
+  const candidates = fs
+    .readdirSync(folderPath, { withFileTypes: true })
+    .filter((entry) => entry.isFile())
+    .map((entry) => entry.name)
+    .filter((name) => path.extname(name).toLowerCase() === ".mp4");
+
+  const exactCurrentFileName = row.current_file_name ? path.join(folderPath, row.current_file_name) : "";
+  if (exactCurrentFileName && fs.existsSync(exactCurrentFileName)) return exactCurrentFileName;
+
+  const looseMatches = candidates.filter((name) => normalizeFileNameForLookup(name) === expectedLoose);
+  if (looseMatches.length === 1) return path.join(folderPath, looseMatches[0]);
+
+  if (productId) {
+    const productMatches = candidates.filter((name) => name.includes(productId));
+    if (productMatches.length === 1) return path.join(folderPath, productMatches[0]);
+
+    const expectedSuffix = extractFilePartSuffix(expectedFileName);
+    if (expectedSuffix) {
+      const suffixMatches = productMatches.filter((name) => extractFilePartSuffix(name) === expectedSuffix);
+      if (suffixMatches.length === 1) return path.join(folderPath, suffixMatches[0]);
+    }
+
+    const expectedDuplicateSuffix = extractDuplicateSuffix(expectedFileName);
+    const duplicateMatches = productMatches.filter((name) => extractDuplicateSuffix(name) === expectedDuplicateSuffix);
+    if (duplicateMatches.length === 1) return path.join(folderPath, duplicateMatches[0]);
+
+    const looseProductMatches = productMatches.filter((name) =>
+      normalizeFileNameForLookup(name).includes(normalizeFileNameForLookup(productId))
+    );
+    if (looseProductMatches.length === 1) return path.join(folderPath, looseProductMatches[0]);
+  }
+
+  return normalized;
+}
+
+function extractDuplicateSuffix(fileName: string): string {
+  const baseName = path.basename(String(fileName || ""), path.extname(fileName || ""));
+  const match = baseName.match(/\(([0-9]{1,3})\)$/);
+  return match ? String(Number(match[1])) : "none";
+}
+
+function extractFilePartSuffix(fileName: string): string {
+  const baseName = path.basename(String(fileName || ""), path.extname(fileName || ""));
+  const match = baseName.match(/(?:^|[-_\s])([0-9]{1,3})$/);
+  if (!match) return "";
+  return String(Number(match[1]));
+}
+
+function normalizeFileNameForLookup(fileName: string): string {
+  return String(fileName || "")
+    .normalize("NFKC")
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}.]+/gu, "");
 }
 
 async function openExplorerFolder(targetPath: string) {
@@ -229,22 +303,30 @@ async function openExplorerFolder(targetPath: string) {
 
 async function openMediaFile(targetPath: string) {
   const normalized = normalizeWindowsPath(targetPath);
+  if (!isPathAllowed(normalized)) {
+    throw new Error("file_not_allowed");
+  }
   if (!fs.existsSync(normalized)) {
-    throw new Error(`file_not_exists: ${normalized}`);
+    throw new Error("file_not_exists");
   }
 
   const launchTemplate = (process.env.MPC_BE_LAUNCH_TEMPLATE || "").trim();
+  const useLaunchTemplate = (process.env.MPC_BE_USE_LAUNCH_TEMPLATE || "false").toLowerCase() === "true";
   const mpcPath = (process.env.MPC_BE_PATH || "").trim();
+  const mpcExecutable = resolveMpcBeExecutable(mpcPath);
 
-  if (mpcPath) {
-    await launchWindowsStart([mpcPath, normalized]);
-    return;
-  }
-
-  if (launchTemplate) {
+  if (useLaunchTemplate && launchTemplate) {
     const quotedPath = quoteCmdArg(normalized);
     const command = launchTemplate.replaceAll('"{file}"', quotedPath).replaceAll("{file}", quotedPath);
     await launchDetached("cmd.exe", ["/d", "/s", "/c", command]);
+    return;
+  }
+
+  if (mpcPath || mpcExecutable) {
+    if (!mpcExecutable) {
+      throw new Error("mpc_be_not_exists");
+    }
+    await launchMpcViaExplorerLauncher(mpcExecutable, normalized);
     return;
   }
 
@@ -252,8 +334,107 @@ async function openMediaFile(targetPath: string) {
   await launchWindowsStart(["explorer.exe", normalized]);
 }
 
+function resolveMpcBeExecutable(configuredPath: string): string | null {
+  const normalizedConfiguredPath = configuredPath ? normalizeWindowsPath(configuredPath) : "";
+  const aliasPath = resolveWindowsAppAlias(MPC_BE_ALIAS_NAME);
+
+  if (aliasPath && launcherPathExists(aliasPath)) {
+    return aliasPath;
+  }
+  if (normalizedConfiguredPath && fs.existsSync(normalizedConfiguredPath) && !isWindowsAppsPackagePath(normalizedConfiguredPath)) {
+    return normalizedConfiguredPath;
+  }
+  return null;
+}
+
+function resolveWindowsAppAlias(exeName: string): string | null {
+  const localAppData =
+    process.env.LOCALAPPDATA ||
+    (process.env.USERPROFILE ? path.join(process.env.USERPROFILE, "AppData", "Local") : "") ||
+    inferLocalAppDataFromProjectRoot();
+  if (!localAppData) return null;
+  return path.join(localAppData, "Microsoft", "WindowsApps", exeName);
+}
+
+function launcherPathExists(targetPath: string): boolean {
+  try {
+    fs.lstatSync(targetPath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function inferLocalAppDataFromProjectRoot(): string {
+  const parts = normalizeWindowsPath(PROJECT_ROOT).split("\\").filter(Boolean);
+  if (parts.length < 3 || parts[1].toLowerCase() !== "users") return "";
+  return path.join(`${parts[0]}\\`, parts[1], parts[2], "AppData", "Local");
+}
+
+function isWindowsAppsPackagePath(targetPath: string): boolean {
+  return normalizeWindowsPath(targetPath).toLowerCase().includes("\\program files\\windowsapps\\");
+}
+
+function getLauncherStatus() {
+  const configuredPath = (process.env.MPC_BE_PATH || "").trim();
+  const aliasPath = resolveWindowsAppAlias(MPC_BE_ALIAS_NAME);
+  return {
+    mpcAliasLaunchable: Boolean(aliasPath && launcherPathExists(aliasPath)),
+    mpcConfiguredReady: Boolean(
+      configuredPath && fs.existsSync(normalizeWindowsPath(configuredPath)) && !isWindowsAppsPackagePath(configuredPath)
+    ),
+    mpcConfiguredIsWindowsApps: Boolean(configuredPath && isWindowsAppsPackagePath(configuredPath)),
+    mpcTemplateConfigured: Boolean((process.env.MPC_BE_LAUNCH_TEMPLATE || "").trim()),
+    mpcTemplateEnabled: (process.env.MPC_BE_USE_LAUNCH_TEMPLATE || "false").toLowerCase() === "true",
+  };
+}
+
 function quoteCmdArg(value: string): string {
   return `"${String(value).replace(/"/g, '\\"')}"`;
+}
+
+async function launchMpcViaExplorerLauncher(executablePath: string, mediaPath: string): Promise<void> {
+  const baseName = `thumbnail-library-open-${process.pid}-${Date.now()}`;
+  const scriptPath = path.join(os.tmpdir(), `${baseName}.ps1`);
+  const commandPath = path.join(os.tmpdir(), `${baseName}.cmd`);
+  const script = [
+    "$ErrorActionPreference = 'Stop'",
+    `$FilePath = ${quotePowerShellSingleString(executablePath)}`,
+    `$MediaPath = ${quotePowerShellSingleString(mediaPath)}`,
+    'Start-Process -FilePath $FilePath -ArgumentList (\'"\' + $MediaPath + \'"\')',
+    "",
+  ].join("\r\n");
+  const command = [
+    "@echo off",
+    `powershell.exe -NoProfile -ExecutionPolicy Bypass -File "${commandPathForBatch(scriptPath)}"`,
+    "",
+  ].join("\r\n");
+
+  fs.writeFileSync(scriptPath, `\ufeff${script}`, "utf8");
+  fs.writeFileSync(commandPath, command, "utf8");
+  try {
+    await launchDetached(EXPLORER_EXE, [commandPath], { visible: true });
+  } finally {
+    setTimeout(() => cleanupLauncherFiles([scriptPath, commandPath]), 30000);
+  }
+}
+
+function quotePowerShellSingleString(value: string): string {
+  return `'${String(value).replace(/'/g, "''")}'`;
+}
+
+function commandPathForBatch(value: string): string {
+  return String(value).replace(/%/g, "%%");
+}
+
+function cleanupLauncherFiles(filePaths: string[]) {
+  for (const filePath of filePaths) {
+    try {
+      fs.unlinkSync(filePath);
+    } catch {
+      // Ignore cleanup errors for one-shot launcher files.
+    }
+  }
 }
 
 function launchWindowsStart(commandAndArgs: string[]): Promise<void> {
@@ -362,7 +543,12 @@ function attachLibraryApi(server: any) {
           }
           res.setHeader("Content-Type", "application/json; charset=utf-8");
           res.end(
-            JSON.stringify({ ok: true, app: "thumbnail_library_ui", apiVersion: "open-folder-explorer-direct-v3" })
+            JSON.stringify({
+              ok: true,
+              app: "thumbnail_library_ui",
+              apiVersion: "open-file-template-gated-v15",
+              launcher: getLauncherStatus(),
+            })
           );
         });
 
@@ -467,11 +653,11 @@ function attachLibraryApi(server: any) {
             await openMediaFile(currentPath);
             res.statusCode = 200;
             res.setHeader("Content-Type", "application/json; charset=utf-8");
-            res.end(JSON.stringify({ ok: true, mode: "file" }));
+            res.end(JSON.stringify({ ok: true, mode: "file", launcher: "mpc-be-explorer-launcher" }));
           } catch (error: any) {
             res.statusCode = 500;
             res.setHeader("Content-Type", "application/json; charset=utf-8");
-            res.end(JSON.stringify({ ok: false, message: "open_file_failed" }));
+            res.end(JSON.stringify({ ok: false, message: error?.message || "open_file_failed" }));
           }
         });
 }

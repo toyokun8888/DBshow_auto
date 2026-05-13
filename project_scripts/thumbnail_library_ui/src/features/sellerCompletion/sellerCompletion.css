@@ -1,0 +1,271 @@
+.seller-completion-page {
+  min-height: 100vh;
+  display: grid;
+  grid-template-columns: 420px 1fr;
+  background: #0f1218;
+  color: #e7ecf5;
+  font-family: "Segoe UI", sans-serif;
+}
+
+.seller-completion-sidebar {
+  border-right: 1px solid #2f3a4a;
+  background: #111824;
+  padding: 16px;
+  overflow: auto;
+}
+
+.seller-completion-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+  margin-bottom: 14px;
+}
+
+.seller-completion-header h1 {
+  margin: 0;
+  font-size: 22px;
+}
+
+.seller-completion-header p {
+  margin: 6px 0 0;
+  color: #aebbd1;
+  font-size: 13px;
+}
+
+.seller-completion-header button,
+.seller-completion-controls input,
+.seller-completion-controls select,
+.missing-toolbar input {
+  border: 1px solid #314056;
+  border-radius: 8px;
+  background: #1a2230;
+  color: #e7ecf5;
+  padding: 10px;
+}
+
+.seller-completion-header button {
+  cursor: pointer;
+}
+
+.seller-completion-controls {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.seller-completion-count {
+  color: #b7c5dd;
+  font-size: 13px;
+  margin-bottom: 10px;
+}
+
+.seller-list {
+  display: grid;
+  gap: 8px;
+}
+
+.seller-row {
+  width: 100%;
+  text-align: left;
+  border: 1px solid #2f3a4a;
+  border-radius: 10px;
+  background: #171f2b;
+  color: #e7ecf5;
+  padding: 10px;
+  cursor: pointer;
+}
+
+.seller-row:hover {
+  border-color: #526789;
+  background: #1b2535;
+}
+
+.seller-row.selected {
+  border-color: #86a8ff;
+  background: #202d44;
+}
+
+.seller-row-main,
+.seller-row-sub {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.seller-name {
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.seller-rate {
+  color: #9bf7be;
+  font-weight: 700;
+}
+
+.seller-row-sub {
+  margin-top: 5px;
+  color: #aebbd1;
+  font-size: 12px;
+}
+
+.seller-progress {
+  height: 6px;
+  margin-top: 8px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: #0c1018;
+}
+
+.seller-progress-fill {
+  height: 100%;
+  background: #7fa2ff;
+}
+
+.seller-missing {
+  margin-top: 7px;
+  color: #d4deef;
+  font-size: 12px;
+}
+
+.seller-completion-main {
+  min-width: 0;
+  overflow: auto;
+  padding: 18px;
+}
+
+.seller-completion-error {
+  border: 1px solid #8d4242;
+  background: #2a171a;
+  color: #ffb2b2;
+  border-radius: 10px;
+  padding: 12px;
+  margin-bottom: 12px;
+}
+
+.seller-completion-loading,
+.seller-empty {
+  border: 1px solid #2f3a4a;
+  background: #171f2b;
+  border-radius: 10px;
+  padding: 18px;
+  color: #c9d5ea;
+}
+
+.seller-empty h2 {
+  margin: 0 0 8px;
+}
+
+.seller-empty p {
+  margin: 0;
+  color: #aebbd1;
+}
+
+.selected-seller-panel {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  border: 1px solid #2f3a4a;
+  background: #171f2b;
+  border-radius: 12px;
+  padding: 16px;
+  margin-bottom: 12px;
+}
+
+.selected-seller-panel h2 {
+  margin: 0;
+  font-size: 24px;
+}
+
+.selected-seller-panel p {
+  margin: 6px 0 0;
+  color: #aebbd1;
+}
+
+.selected-seller-stats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(80px, 1fr));
+  gap: 8px;
+  min-width: 420px;
+}
+
+.selected-seller-stats div {
+  border: 1px solid #314056;
+  border-radius: 10px;
+  padding: 10px;
+  background: #111824;
+}
+
+.selected-seller-stats span {
+  display: block;
+  color: #aebbd1;
+  font-size: 12px;
+}
+
+.selected-seller-stats strong {
+  display: block;
+  margin-top: 5px;
+  font-size: 20px;
+}
+
+.missing-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.missing-toolbar input {
+  flex: 1;
+}
+
+.missing-toolbar span {
+  color: #b7c5dd;
+  font-size: 14px;
+}
+
+.missing-list {
+  display: grid;
+  gap: 8px;
+}
+
+.missing-card {
+  border: 1px solid #2f3a4a;
+  border-radius: 10px;
+  background: #171f2b;
+  padding: 12px;
+}
+
+.missing-product-id {
+  font-weight: 700;
+  color: #9bf7be;
+  margin-bottom: 6px;
+}
+
+.missing-title {
+  color: #d2ddef;
+  line-height: 1.45;
+}
+
+@media (max-width: 980px) {
+  .seller-completion-page {
+    grid-template-columns: 1fr;
+  }
+
+  .seller-completion-sidebar {
+    border-right: 0;
+    border-bottom: 1px solid #2f3a4a;
+    max-height: 45vh;
+  }
+
+  .selected-seller-panel {
+    display: grid;
+  }
+
+  .selected-seller-stats {
+    min-width: 0;
+    grid-template-columns: repeat(2, 1fr);
+  }
+}

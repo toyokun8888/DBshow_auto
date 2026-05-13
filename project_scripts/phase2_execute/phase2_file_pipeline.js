@@ -200,7 +200,7 @@ async function processOne(ctx) {
   }
 
   const sellerName = sanitizePathSegment(
-    masterRow.seller_name || masterRow.seller || masterRow.canonical_seller_name,
+    masterRow.seller_id,
     config.unknownSellerFolder
   );
   const plannedName = buildPlannedFileName(extracted.primaryProductId, masterRow.title, extracted.partLabel, config.maxFileNameLength);
