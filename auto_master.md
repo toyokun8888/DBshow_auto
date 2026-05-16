@@ -179,6 +179,16 @@ collected_at
 
 # stageテーブル
 
+## 2026-05-16 注意
+
+現行コードではstage初期化に `TRUNCATE TABLE` を使っているが、`rules.md` では `TRUNCATE` が禁止されている。ここは現状記録として残すが、今後の正式運用では以下のいずれかに整理する。
+
+* `run_id` をstageに追加し、実行単位で対象行を絞る
+* 実行ごとのtemporary tableを使う
+* stage専用 `TRUNCATE` を明示例外としてユーザー承認する
+
+推奨は `run_id` 付きstage方式。
+
 ## full stage
 
 ```text
@@ -306,7 +316,9 @@ masterとの差分管理ではなく、取得作品管理テーブル。
 ```text
 1. JSで検索ページ取得
 2. CSV生成
-3. stageテーブル TRUNCATE
+3. stageテーブル初期化
+   * 現行コードは `TRUNCATE`
+   * 今後の推奨は `run_id` 付きstage方式
 4. CSV投入
 5. 重複確認
 6. master既存照合
@@ -327,7 +339,9 @@ masterとの差分管理ではなく、取得作品管理テーブル。
 * DB最大product_id取得
 * 検索ページ先頭の最新ID取得
 * 差分のみ収集
-* stage自動TRUNCATE
+* stage自動初期化
+  * 現行コードは `TRUNCATE`
+  * 今後の推奨は `run_id` 付きstage方式
 * 自動INSERT
 * ログCSV保存
 

@@ -1424,3 +1424,186 @@ CSVログファイル名:
 - `duplicate_label` がない場合は `is_duplicate_candidate = false` にする。
 - 初期値は `status = owned`, `source = legacy_testcsv`, `matched_by = testcsv_number_master` とする。
 - 初期移行前に必ずドライランSELECTを出し、件数、正規化パス、`product_id`, `part_label`, `duplicate_label`, `is_duplicate_candidate` を確認する。
+
+---
+
+## 2026-05-16 現行DB仕様メモ
+
+この節は、ローカルDB `mp4DB` を読み取り専用で確認した現行仕様である。既存の過去メモは残し、現在のWebアプリとバッチが実際に参照しているDBオブジェクトをここに整理する。
+
+### FC2記事ページ補完マスター
+
+`fc2_article_collector_operational.js` が、既存の `master` の穴を補完するためにFC2記事ページをスクレイピングし、差分登録の受け皿として使う。
+
+#### `master`
+
+- 役割: 既存の最小FC2マスター。
+- 列: `product_id`, `title`, `seller_id`
+- 現行件数: 1,827,313件
+- 備考: `product_id` に `master_pid_unique` がある。現時点では `xxx_` 接頭辞ではない既存中核テーブルとして継続利用している。
+
+#### `xxx_tm006_fc2_article_master_full`
+
+- 役割: FC2記事ページ由来の補完マスター本体。
+- 主キー: `product_id`
+- 現行件数: 152,247件
+- 列: `product_id`, `title`, `seller_id`, `seller_name`, `price_text`, `price_pt`, `article_url`, `search_page_url`, `page_number`, `row_index_in_page`, `collected_at`
+- 主な索引: `product_id` primary key, `seller_id`, `price_pt`, `page_number`, `collected_at`
+- 用途: `master` にはない販売者名、価格、記事URL、取得ページ情報を保持する。
+
+#### `xxx_tm006_fc2_article_master_full_stage`
+
+- 役割: `xxx_tm006_fc2_article_master_full` へ差分投入する前のステージ。
+- 現行件数: 3,300件
+- 列: `xxx_tm006_fc2_article_master_full` と同じ。
+- 注意: 現行コードは投入前に `TRUNCATE TABLE` している。`rules.md` では `TRUNCATE` が禁止されているため、今後は `run_id` 付きステージ、テンポラリテーブル、または明示例外承認のいずれかに整理する必要がある。
+
+#### `xxx_tm006_fc2_article_master_import_stage`
+
+- 役割: `master` に差分投入するための最小列ステージ。
+- 現行件数: 3,300件
+- 列: `product_id`, `title`, `seller_id`
+- 注意: こちらも現行コードでは `TRUNCATE TABLE` 対象である。
+
+### Webアプリ用ビュー
+
+#### `xxx_vq001_moviemaster_unique`
+
+- 役割: Webアプリとファイル処理の標準作品マスター参照ビュー。
+- 列: `product_id`, `title`, `seller_id`
+- 現行件数: 1,827,313件
+- 定義概要: `master` をベースにし、`master_title_fix` の `product_id` ごとの `MAX(title)`, `MAX(seller_id)` を左結合する。表示タイトルは `COALESCE(fixed.title, master.title)`。
+
+#### `xxx_vq002_owned_product_ids`
+
+- 役割: 所持済み `product_id` 判定用ビュー。
+- 列: `product_id`
+- 現行件数: 5,973件
+- 定義概要: legacy `testcsv` の `action = 'Moved+Renamed'` と、`xxx_tm002_owned_files.status = 'owned'` を `UNION` する。
+- 注意: `xxx_tm002_owned_files` にない `product_id` が混ざるため、クリーンな所有判定だけを使う画面では整理が必要。
+
+#### `xxx_vq013_owned_seller_summary_display`
+
+- 役割: Seller Completion の販売者一覧用ビュー。
+- 列: `seller_id`, `seller_name`, `total_products`, `owned_products`, `missing_products`
+- 現行件数: 519件
+- 定義概要: `xxx_vq010_owned_seller_summary` に `xxx_vq012_seller_display` を左結合して、販売者ごとの所持/未所持数と表示名を出す。
+- API用途: `/api/seller-summary`
+
+#### `xxx_vq025_rapidgator_best_links`
+
+- 役割: 欠品作品へRapidgator候補リンクを付与するビュー。
+- 現行件数: 29,174件
+- 主な列: `fc2_product_id`, `has_rapidgator`, `has_mp4`, `has_rar`, `total_records`, `distinct_url_count`, `mp4_count`, `rar_count`, `best_mp4_title`, `best_mp4_url`, `best_mp4_size`, `best_mp4_page_url`, `best_page_url`, `all_urls`, `normalized_group_key`, `normalized_group_rule`
+- 定義概要: `xxx_vq020_rapidgator_group_normalized` のうち `fc2_product_id` がある行を集計し、mp4優先で代表リンクを選ぶ。
+- API用途: `/api/seller-missing/:sellerId`
+
+#### `xxx_vq023_rapidgator_group_summary`
+
+- 役割: Rapidgator Research の左側グループ一覧用ビュー。
+- 現行件数: 7,023件
+- グループ単位: `normalized_group_key`
+- 主な列: `normalized_group_key`, `sample_group_rule`, `total_records`, `distinct_file_title_count`, `distinct_base_title_count`, `distinct_url_count`, `source_page_count`, `fc2_record_count`, `distinct_fc2_product_count`, `mp4_count`, `mkv_count`, `avi_count`, `wmv_count`, `rar_count`, `part_record_count`, `sample_folder_name`, `sample_file_title`, `sample_file_url`, `file_ext_list`
+- API用途: `/api/rapidgator/groups`
+
+#### `xxx_vq022_rapidgator_base_title_summary`
+
+- 役割: Rapidgator Research のグループ内アイテム一覧用ビュー。
+- 現行件数: 479,715件
+- 集計単位: `base_title_without_part`
+- 主な列: `base_title_without_part`, `normalized_group_key`, `normalized_group_rule`, `fc2_product_id`, `total_records`, `distinct_url_count`, `source_page_count`, `mp4_count`, `mkv_count`, `avi_count`, `wmv_count`, `rar_count`, `part_record_count`, `min_part_no`, `max_part_no`, `availability_type`, `sample_folder_name`, `sample_file_title`, `sample_file_url`, `file_ext_list`, `file_title_list`, `file_url_list`
+- API用途: `/api/rapidgator/group/:groupKey/items`
+
+#### `xxx_v_local_mp4_exists_master`
+
+- 役割: ローカルに実ファイル候補があり、かつ `master` に存在する作品を表示するビュー。
+- 現行件数: 945件
+- 列: `product_id`, `title`, `seller_id`, `file_name`, `full_path`, `file_size`, `last_write_time`
+- 定義概要: `local_mp4_ids_raw` と `master` を `product_id` で結合し、7桁数字の `product_id` に絞る。
+- API用途: `/api/seller-missing/:sellerId` のローカルMP4候補表示。
+- 注意: View名が `xxx_VQ###_...` 形式ではない。既存互換として残すか、規約準拠の `xxx_vq###_local_mp4_exists_master` を新設するかは要決定。
+
+### Rapidgator系
+
+#### `xxx_tl002_rapidgator_raw`
+
+- 役割: Rapidgator収集結果の生ログテーブル。
+- 現行件数: 780,712件
+- 主な列: `global_seq`, `csv_part_no`, `file_seq`, `source_page_url`, `folder_id`, `folder_name`, `page_number`, `row_index_in_page`, `file_title`, `file_url`, `file_size`, `file_ext`, `group_key`, `group_rule`, `fc2_product_id`, `part_no`, `part_label`, `part_type`, `base_title_without_part`, `collected_at`, `inserted_at`
+- 派生ビュー: `xxx_vq020_rapidgator_group_normalized`, `xxx_vq022_rapidgator_base_title_summary`, `xxx_vq023_rapidgator_group_summary`, `xxx_vq024_rapidgator_multi_url`, `xxx_vq025_rapidgator_best_links`
+
+#### `xxx_vq020_rapidgator_group_normalized`
+
+- 役割: Rapidgator raw に `normalized_group_key` と `normalized_group_rule` を付与した正規化ビュー。
+- 現行件数: 780,712件
+- 用途: Rapidgator系集計ビューの共通入力。
+
+### ローカルファイル/所有管理
+
+#### `xxx_tm002_owned_files`
+
+- 役割: クリーンに所持確定したローカルファイルの本登録テーブル。
+- 現行件数: 7,111件
+- 主な列: `id`, `product_id`, `current_path`, `current_file_name`, `original_path`, `original_file_name`, `file_ext`, `part_label`, `duplicate_label`, `duplicate_group_key`, `is_duplicate_candidate`, `pathid`, `status`, `source`, `matched_by`, `file_size`, `file_modified_at`, `last_checked_at`, `note`, `created_at`, `updated_at`
+- UI用途: Local Library の一覧と open file/open folder の基準データ。
+
+#### `xxx_tm005_unmatched_files`
+
+- 役割: 未照合または手動確認が必要なファイルの受け皿。
+- 現行件数: 1,323件
+- 主な列: `id`, `run_id`, `detected_path`, `staged_path`, `current_path`, `detected_file_name`, `current_file_name`, `extracted_product_id`, `reason`, `status`, `source`, `file_size`, `file_modified_at`, `note`, `created_at`, `updated_at`
+- 方針: `xxx_tm002_owned_files` はクリーンな所持ファイルに限定し、未照合候補はこのテーブルで扱う。
+
+#### `local_mp4_ids_raw`
+
+- 役割: ローカルMP4スキャン結果の生テーブル。
+- 現行件数: 2,276件
+- 列: `id`, `product_id`, `file_name`, `full_path`, `file_size`, `last_write_time`, `imported_at`
+- 用途: `xxx_v_local_mp4_exists_master` の入力。
+
+### Thumbnail系の現状
+
+- `xxx_tm006_thumbnail_assets`: 実DBには未作成。
+- `xxx_tl002_thumbnail_jobs`: 実DBには未作成。
+- 注意: コード上は `thumbnail_collector.js` と Vite middleware が `xxx_tm006_thumbnail_assets` を参照予定だが、現状は未作成のためUI側はfallbackし、`thumbnail_path` は空、`collect_status` は `unknown` になる。
+- 採番注意: `TM006` は実DBではFC2記事ページ補完マスターが使用済み。サムネイル資産テーブルは `xxx_tm007_thumbnail_assets` など次の空き番号にする案が安全。
+- 採番注意: `TL002` は実DBでは `xxx_tl002_rapidgator_raw` が使用済み。サムネイルジョブログは次の空き番号にする案が安全。
+## 2026-05-16 追記: FC2 Wiki販売者軸とサムネイル状態
+
+### `xxx_tm009_fc2_wiki_thumbnail_assets`
+
+- 役割: FC2 Wiki由来のサムネイル取得状態を、`product_id` 単位で管理する。
+- 主な列: `product_id`, `thumbnail_url`, `local_thumbnail_path`, `local_thumbnail_file_name`, `thumbnail_status`, `source_wiki_url`, `last_checked_at`, `downloaded_at`, `attempt_count`, `last_error`, `created_at`, `updated_at`
+- 用途: 「実体ファイルはあるがサムネイルがない」作品を抽出・ソートするための状態テーブル。
+- 保存先の実体ファイルは原則 `fc2_sum` 配下に置く。
+- 旧計画の `xxx_tm006_thumbnail_assets` は採番衝突のため使わず、現行UIは `xxx_tm009_fc2_wiki_thumbnail_assets` と `xxx_vq029_owned_file_thumbnail_status` を参照する。
+
+### `xxx_vq026_wiki_article_master_enriched`
+
+- 役割: `xxx_tm008_fc2_wiki_articles` と `xxx_vq001_moviemaster_unique` を結合し、masterに存在確認できたFC2 Wiki記事を扱うビュー。
+- 現行件数: 75,919件。
+- 販売者表示はFC2 Wiki由来の `wiki_seller_name` を主軸にする。
+
+### `xxx_vq027_wiki_seller_summary_display`
+
+- 役割: Seller Completionの販売者一覧用ビュー。
+- `seller_id` は `wiki_seller_id` を文字列化した値、`seller_name` はFC2 Wiki由来の販売者名。
+- `/api/seller-summary` はこのビューを読む。
+
+### `xxx_vq028_wiki_seller_missing_products`
+
+- 役割: Seller Completionの販売者別未所持一覧用ビュー。
+- `/api/seller-missing/:sellerId` はこのビューを起点にし、Rapidgator候補とローカルMP4候補を付与する。
+
+### `xxx_vq029_owned_file_thumbnail_status`
+
+- 役割: Local Libraryの所持作品に、FC2 WikiサムネイルURL、ローカルサムネイル状態、欠損状態を付与するビュー。
+- `owned_without_thumbnail = true` の行は、所持ファイルはあるがローカルサムネイルが未取得の候補として扱える。
+
+### `xxx_vq030_rapidgator_wiki_display`
+
+- 役割: Rapidgator Researchの未所持候補リストに、FC2 Wiki基準の販売者名とサムネイル状態を付与するビュー。
+- 入力: `xxx_vq022_rapidgator_base_title_summary`, `xxx_vq026_wiki_article_master_enriched`, `xxx_tm009_fc2_wiki_thumbnail_assets`
+- 結合キー: `fc2_product_id = product_id`
+- 主な追加列: `wiki_seller_id`, `wiki_seller_name`, `wiki_display_title`, `thumbnail_url`, `local_thumbnail_path`, `thumbnail_status`, `has_local_thumbnail`
+- UI用途: `/api/rapidgator/group/:groupKey/items` がこのビューを読み、右側リストに販売者名と取得済みサムネイルを表示する。

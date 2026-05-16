@@ -301,6 +301,36 @@
   gap: 12px;
 }
 
+.rapidgator-item-main {
+  display: grid;
+  grid-template-columns: 132px minmax(0, 1fr);
+  gap: 12px;
+  min-width: 0;
+}
+
+.rapidgator-item-thumb {
+  width: 132px;
+  aspect-ratio: 16 / 9;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  border: 1px solid #544173;
+  border-radius: 8px;
+  background: #15111c;
+  color: #8f80aa;
+  font-size: 12px;
+}
+
+.rapidgator-item-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.rapidgator-item-text {
+  min-width: 0;
+}
+
 .rapidgator-item-title {
   font-weight: 700;
 
@@ -315,6 +345,12 @@
   font-size: 13px;
 
   word-break: break-all;
+}
+
+.rapidgator-item-seller {
+  margin-top: 6px;
+  color: #bdaee0;
+  font-size: 12px;
 }
 
 .rapidgator-item-actions {
@@ -419,5 +455,13 @@
 
   .rapidgator-item-header {
     flex-direction: column;
+  }
+
+  .rapidgator-item-main {
+    grid-template-columns: 112px minmax(0, 1fr);
+  }
+
+  .rapidgator-item-thumb {
+    width: 112px;
   }
 }

@@ -74,7 +74,7 @@ const START_PAGE = 207;
 // 取得終了ページ
 //const END_PAGE = 6264;// 2026-5-14 時点の最大ページ数
 //const END_PAGE = 1089;// 2026-5-14 時点の最大ページ数
-const END_PAGE = 2057;// 2026-5-14 時点の最大ページ数
+const END_PAGE = 2056// 2026-5-14 時点の最大ページ数
 // 途中再開ページ
 // 通常は null
 // 例: 350 から再開したい場合 → const RESUME_PAGE = 350;

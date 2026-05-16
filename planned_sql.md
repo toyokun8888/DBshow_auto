@@ -544,3 +544,179 @@ CREATE INDEX xxx_idx_TM005_unmatched_files_current_path
 - `source = legacy_testcsv`, `matched_by = testcsv_number_master` の件数は6132件。
 - `current_path` 重複確認は空。
 - これにより、初期移行DB登録は成功扱いとする。
+
+---
+
+## 2026-05-16 現行DBとの差分整理と今後のSQL方針
+
+この節は、ローカルDB `mp4DB` の読み取り確認結果をもとにした追記である。ここに書くSQL方針は、まだ実行しない。実行前にユーザー確認を取る。
+
+### 1. 採番の現状
+
+実DBでは以下が存在する。
+
+- `xxx_tm006_fc2_article_master_full`
+- `xxx_tm006_fc2_article_master_full_stage`
+- `xxx_tm006_fc2_article_master_import_stage`
+- `xxx_tl002_rapidgator_raw`
+
+一方、既存のサムネイル計画では以下を予定していた。
+
+- `xxx_tm006_thumbnail_assets`
+- `xxx_tl002_thumbnail_jobs`
+
+このため、`TM006` と `TL002` は現行DBと計画の間で衝突している。既存DBを優先する場合、サムネイル系は次の空き番号へ変更する。
+
+推奨案:
+
+- `xxx_tm006_*`: FC2記事ページ補完マスター系として固定する。
+- サムネイル資産テーブル: `xxx_tm007_thumbnail_assets` などへ変更する。
+- `xxx_tl002_rapidgator_raw`: Rapidgator rawログとして固定する。
+- サムネイルジョブログ: `xxx_tl003_thumbnail_jobs` などへ変更する。
+
+未決定事項:
+
+- サムネイル系の正式な `TM` / `TL` 番号。
+- 既存コード内の `xxx_tm006_thumbnail_assets` 参照を、いつどの番号へ移すか。
+
+### 2. FC2記事ページ補完マスター系
+
+現行用途:
+
+- 既存 `master` の穴を補完するため、FC2記事ページから `product_id`, `title`, `seller_id`, `seller_name`, `price`, `article_url` などを収集する。
+- `xxx_tm006_fc2_article_master_full_stage` に一時投入する。
+- `xxx_tm006_fc2_article_master_import_stage` に `master` 追加用の最小列を一時投入する。
+- 差分だけ `master` と `xxx_tm006_fc2_article_master_full` に登録する。
+
+現行コード上の注意:
+
+- `fc2_article_collector_operational.js` は `DRY_RUN = false` と `CONFIRM_EXECUTE = "YES"` でDB更新可能な状態。
+- stage初期化に `TRUNCATE TABLE` を使っている。
+- `TRUNCATE` は `rules.md` の禁止事項と衝突する。
+
+今後のSQL方針案:
+
+1. `run_id` 付きステージ方式
+   - stageテーブルに `run_id` を追加する。
+   - 新規runの行だけ `INSERT` する。
+   - 差分反映時は `WHERE run_id = $current_run_id` で対象を絞る。
+   - 過去runは保持し、必要に応じて明示承認後にアーカイブ/整理する。
+
+2. temporary table方式
+   - 実行ごとにセッション内 `TEMP TABLE` を作る。
+   - 恒久stageを空にしない。
+   - バッチが落ちても既存データを破壊しない。
+
+3. 明示例外方式
+   - stage専用テーブルに限って `TRUNCATE` を許可する例外を文書化する。
+   - ただし、現行の `rules.md` と衝突するため、ユーザー承認が必要。
+
+推奨は `run_id` 付きステージ方式である。理由は、CSVログ、DB投入ログ、実行単位の再確認を後から突き合わせやすいから。
+
+### 3. Rapidgator系ビューの管理対象
+
+実DBで確認したRapidgator系の主要オブジェクト:
+
+- `xxx_tl002_rapidgator_raw`
+- `xxx_vq020_rapidgator_group_normalized`
+- `xxx_vq021_rapidgator_fc2_unowned`
+- `xxx_vq022_rapidgator_base_title_summary`
+- `xxx_vq023_rapidgator_group_summary`
+- `xxx_vq024_rapidgator_multi_url`
+- `xxx_vq025_rapidgator_best_links`
+
+今後は、これらの `CREATE VIEW` 定義を `planned_sql.md` または専用のRapidgator SQL計画ファイルで管理する。
+
+現行UI/API対応:
+
+- `/api/rapidgator/groups` は `xxx_vq023_rapidgator_group_summary` を読む。
+- `/api/rapidgator/group/:groupKey/items` は `xxx_vq022_rapidgator_base_title_summary` を読む。
+- `/api/seller-missing/:sellerId` は `xxx_vq025_rapidgator_best_links` を読む。
+
+### 4. Seller Completion系ビューの管理対象
+
+現行UI/API対応:
+
+- `/api/seller-summary` は `xxx_vq013_owned_seller_summary_display` を読む。
+- `/api/seller-missing/:sellerId` は `xxx_vq001_moviemaster_unique`, `xxx_vq002_owned_product_ids`, `xxx_vq025_rapidgator_best_links`, `xxx_v_local_mp4_exists_master` を読む。
+
+注意:
+
+- `xxx_vq002_owned_product_ids` は legacy `testcsv` と `xxx_tm002_owned_files` を `UNION` している。
+- クリーンな所有判定に寄せる場合は、`xxx_tm002_owned_files` だけを見る新Viewを追加するか、既存Viewの責務を変更する必要がある。
+- 既存View変更はUIの所持/未所持数に影響するため、実行前に件数比較SQLを出す。
+
+### 5. `xxx_v_local_mp4_exists_master` の命名整理
+
+現行の `xxx_v_local_mp4_exists_master` はViewだが、命名規約の `xxx_VQ###_...` 形式ではない。
+
+選択肢:
+
+1. 既存互換として残し、例外Viewとして `database.md` / `library.md` に明記する。
+2. `xxx_vq###_local_mp4_exists_master` を新設し、コード参照を段階的に移行する。
+
+コード変更を伴うため、今回は資料に現状と要決定事項だけを記録する。
+
+### 6. Thumbnail系SQLの再計画
+
+現行DBでは `xxx_tm006_thumbnail_assets` と `xxx_tl002_thumbnail_jobs` は存在しない。
+
+再計画時の方針:
+
+- 実DBで空いている `TM` / `TL` 番号を確認する。
+- `TM006` はFC2記事ページ補完マスター系として扱う。
+- `TL002` はRapidgator rawログとして扱う。
+- thumbnail collector と UI middleware の参照先変更は、DB作成SQLと同じ作業単位で扱う。
+
+### 7. 実行前チェックSQL方針
+
+DB変更前には以下を確認する。
+
+```sql
+SELECT to_regclass('public.xxx_tm006_fc2_article_master_full') AS article_full;
+SELECT to_regclass('public.xxx_tm006_thumbnail_assets') AS old_thumbnail_assets;
+SELECT to_regclass('public.xxx_tl002_rapidgator_raw') AS rapidgator_raw;
+SELECT to_regclass('public.xxx_tl002_thumbnail_jobs') AS old_thumbnail_jobs;
+```
+
+View変更前には、変更前後の件数を比較する。
+
+```sql
+SELECT count(*) FROM public.xxx_vq002_owned_product_ids;
+SELECT count(*) FROM public.xxx_tm002_owned_files WHERE status = 'owned';
+```
+
+`TRUNCATE`, `DROP`, 既存カラム削除は行わない。必要な整理は、追加テーブル、追加View、`run_id` 絞り込み、または明示承認された例外として扱う。
+## 2026-05-16 実行済み: FC2 Wiki販売者軸・サムネイル状態DB
+
+`rules.md` の破壊的変更禁止に合わせ、既存テーブルの削除や `TRUNCATE` は行わず、追加テーブルと追加ビューで対応した。
+
+実行済みオブジェクト:
+
+- `xxx_tm009_fc2_wiki_thumbnail_assets`
+- `xxx_tl003_fc2_wiki_thumbnail_runs`
+- `xxx_tl004_fc2_wiki_thumbnail_run_items`
+- `xxx_vq026_wiki_article_master_enriched`
+- `xxx_vq027_wiki_seller_summary_display`
+- `xxx_vq028_wiki_seller_missing_products`
+- `xxx_vq029_owned_file_thumbnail_status`
+- `xxx_vq030_rapidgator_wiki_display`
+
+採番方針:
+
+- `TM006` はFC2記事ページ補完系で使用済みのため、サムネイル状態テーブルは `TM009` にした。
+- `VQ026` 以降はRapidgator系 `VQ025` の次の空き番号として使用した。
+
+運用方針:
+
+- Seller Completionは `xxx_vq027_wiki_seller_summary_display` と `xxx_vq028_wiki_seller_missing_products` を参照し、FC2 Wiki由来の販売者名を表示軸にする。
+- Local Libraryは `xxx_vq029_owned_file_thumbnail_status` を参照し、所持ファイルに対するサムネイル有無を扱う。
+- Rapidgator Researchは `xxx_vq030_rapidgator_wiki_display` を参照し、Rapidgator候補にFC2 Wiki基準の販売者名とサムネイル状態を付与する。
+- サムネイル実体は `fc2_sum` 配下に保存し、DBにはフルパスとファイル名を保持する。
+
+自動取得:
+
+- `fc2_wiki_thumbnail_collector_operational.js` が `xxx_vq029_owned_file_thumbnail_status` を入力にして、所持作品優先でサムネイルを取得する。
+- 既定では1回100件まで、2.5秒から5.5秒のランダム間隔を置く。
+- 成功は `thumbnail_status = 'collected'`、失敗は `thumbnail_status = 'failed'`、URL欠損・不許可は `thumbnail_status = 'missing_url'` として `xxx_tm009_fc2_wiki_thumbnail_assets` に記録する。
+- 実行単位は `xxx_tl003_fc2_wiki_thumbnail_runs.run_id` で記録し、対象ごとの結果は `xxx_tl004_fc2_wiki_thumbnail_run_items` に記録する。

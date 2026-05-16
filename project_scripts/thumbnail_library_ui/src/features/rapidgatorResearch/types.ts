@@ -14,13 +14,20 @@ export type RapidgatorGroupSummary = {
 };
 
 export type RapidgatorGroupItem = {
+  productId: string;
+
   baseTitle: string;
 
   fileTitle: string;
 
+  sellerName: string;
+
   fileExt: string;
 
   fileSize: string;
+
+  thumbnailPath: string;
+  thumbnailStatus: string;
 
   hasMp4: boolean;
   hasRar: boolean;

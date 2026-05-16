@@ -1,9 +1,27 @@
 # Goal 4 Thumbnail SQL Draft
 
+## 重要: このファイルは旧採番の草案
+
+このファイル内のSQLは、このまま適用しない。実行前に `TM` / `TL` 番号を再決定し、SQL内のテーブル名とインデックス名を更新する。
+
+現行DBでは `TM006` は `xxx_tm006_fc2_article_master_full` / stage系、`TL002` は `xxx_tl002_rapidgator_raw` が使用している。
+
 `Goal 4`（サムネイル収集）用のテーブル草案です。  
 `planned_sql.md` 本体を汚さずに、このファイルを先に適用できます。
 
-## 1) Asset Master (`xxx_tm006_thumbnail_assets`)
+## 2026-05-16 Note
+
+このSQL案は旧採番のまま残っている。現行DB確認では、`xxx_tm006_thumbnail_assets` と `xxx_tl002_thumbnail_jobs` は未作成だった。
+
+ただし、`TM006` はすでに `xxx_tm006_fc2_article_master_full` / stage系が使用しており、`TL002` は `xxx_tl002_rapidgator_raw` が使用している。実行前にサムネイル系の正式番号を再決定すること。
+
+現時点の推奨:
+
+- asset master: `xxx_tm007_thumbnail_assets` など、次の空き `TM` 番号へ変更する。
+- job log: `xxx_tl003_thumbnail_jobs` など、次の空き `TL` 番号へ変更する。
+- コード側の `xxx_tm006_thumbnail_assets` 参照変更は、DB作成SQLの採番決定後に同じ作業単位で行う。
+
+## 1) Asset Master 旧案 (`xxx_tm006_thumbnail_assets`)
 
 ```sql
 CREATE TABLE IF NOT EXISTS public.xxx_tm006_thumbnail_assets (
@@ -27,7 +45,7 @@ CREATE INDEX IF NOT EXISTS xxx_idx_tm006_priority_bucket
     ON public.xxx_tm006_thumbnail_assets (priority_bucket);
 ```
 
-## 2) Job Log (`xxx_tl002_thumbnail_jobs`)
+## 2) Job Log 旧案 (`xxx_tl002_thumbnail_jobs`)
 
 ```sql
 CREATE TABLE IF NOT EXISTS public.xxx_tl002_thumbnail_jobs (

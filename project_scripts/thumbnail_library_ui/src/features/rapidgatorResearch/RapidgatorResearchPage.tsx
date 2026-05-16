@@ -114,6 +114,8 @@ function RapidgatorResearchPage() {
 
     return items.filter((item) => {
       return (
+        item.productId.toLowerCase().includes(keyword) ||
+        item.sellerName.toLowerCase().includes(keyword) ||
         item.fileTitle.toLowerCase().includes(keyword) ||
         item.baseTitle.toLowerCase().includes(keyword)
       );
@@ -295,13 +297,31 @@ function RapidgatorResearchPage() {
                     className="rapidgator-item-card"
                   >
                     <div className="rapidgator-item-header">
-                      <div>
-                        <div className="rapidgator-item-title">
-                          {item.baseTitle}
+                      <div className="rapidgator-item-main">
+                        <div className="rapidgator-item-thumb">
+                          {item.thumbnailPath ? (
+                            <img
+                              src={item.thumbnailPath}
+                              alt=""
+                              loading="lazy"
+                            />
+                          ) : (
+                            <span>No Thumb</span>
+                          )}
                         </div>
 
-                        <div className="rapidgator-item-file">
-                          {item.fileTitle}
+                        <div className="rapidgator-item-text">
+                          <div className="rapidgator-item-title">
+                            {item.baseTitle}
+                          </div>
+
+                          <div className="rapidgator-item-file">
+                            {item.fileTitle}
+                          </div>
+
+                          <div className="rapidgator-item-seller">
+                            {item.sellerName || "seller unknown"}
+                          </div>
                         </div>
                       </div>
 
@@ -429,6 +449,18 @@ function RapidgatorResearchPage() {
                     </div>
 
                     <div className="rapidgator-item-meta">
+                      <span>
+                        id: {item.productId || "-"}
+                      </span>
+
+                      <span>
+                        seller: {item.sellerName || "unknown"}
+                      </span>
+
+                      <span>
+                        thumb: {item.thumbnailStatus || "unknown"}
+                      </span>
+
                       <span>
                         ext: {item.fileExt}
                       </span>

@@ -23,6 +23,10 @@ type LibraryRow = {
   updated_at: string | null;
 };
 
+type ThumbnailPathRow = {
+  local_thumbnail_path: string | null;
+};
+
 type OpenPathRequest = {
   ownedFileId?: number | string | null;
   productId?: string | null;
@@ -113,6 +117,34 @@ function isPathAllowed(currentPath: string): boolean {
   });
 }
 
+function resolveThumbnailRoots(): string[] {
+  const raw = (process.env.THUMBNAIL_ALLOWED_ROOTS || "").trim();
+  const configuredRoots = raw
+    ? raw
+        .split(";")
+        .map((v) => normalizeWindowsPath(v.trim()))
+        .filter(Boolean)
+    : [];
+  return configuredRoots.length > 0
+    ? configuredRoots
+    : [normalizeWindowsPath(path.join(PROJECT_ROOT, "fc2_sum"))];
+}
+
+function isPathUnderRoots(targetPath: string, roots: string[]): boolean {
+  const normalized = normalizeWindowsPath(targetPath).toLowerCase();
+  return roots.some((root) => {
+    const rootLower = normalizeWindowsPath(root).toLowerCase().replace(/[\\]+$/, "");
+    return normalized === rootLower || normalized.startsWith(`${rootLower}\\`);
+  });
+}
+
+function contentTypeForImage(filePath: string): string {
+  const ext = path.extname(filePath).toLowerCase();
+  if (ext === ".png") return "image/png";
+  if (ext === ".webp") return "image/webp";
+  return "image/jpeg";
+}
+
 async function queryLibraryRows(): Promise<LibraryRow[]> {
   loadEnvFile();
   const client = createPgClient();
@@ -123,19 +155,23 @@ async function queryLibraryRows(): Promise<LibraryRow[]> {
         o.id AS owned_file_id,
         o.product_id::text AS product_id,
         COALESCE(m.title, o.current_file_name) AS title,
-        sg.canonical_seller_name AS seller_name,
+        COALESCE(wt.wiki_seller_name, sg.canonical_seller_name) AS seller_name,
         o.current_path,
         o.current_file_name,
-        COALESCE(t.thumbnail_path, '') AS thumbnail_path,
-        COALESCE(t.collect_status, 'unknown') AS collect_status,
+        CASE
+          WHEN COALESCE(wt.local_thumbnail_path, '') <> ''
+          THEN '/api/library/thumbnail/' || o.product_id::text
+          ELSE ''
+        END AS thumbnail_path,
+        COALESCE(wt.collect_status, 'unknown') AS collect_status,
         o.updated_at
       FROM public.xxx_tm002_owned_files o
       LEFT JOIN public.xxx_vq001_moviemaster_unique m
         ON m.product_id = o.product_id::text
       LEFT JOIN public.xxx_tm003_seller_groups sg
         ON sg.seller_id::text = m.seller_id::text
-      LEFT JOIN public.xxx_tm006_thumbnail_assets t
-        ON t.product_id = o.product_id::text
+      LEFT JOIN public.xxx_vq029_owned_file_thumbnail_status wt
+        ON wt.owned_file_id = o.id
       WHERE o.status = 'owned'
       ORDER BY o.updated_at DESC NULLS LAST, o.id DESC
     `;
@@ -170,6 +206,28 @@ async function queryLibraryRows(): Promise<LibraryRow[]> {
       }
       throw error;
     }
+  } finally {
+    await client.end();
+  }
+}
+
+async function resolveThumbnailPath(productId: string): Promise<string | null> {
+  loadEnvFile();
+  const client = createPgClient();
+  await client.connect();
+  try {
+    const result = await client.query<ThumbnailPathRow>(
+      `
+        SELECT local_thumbnail_path
+        FROM public.xxx_tm009_fc2_wiki_thumbnail_assets
+        WHERE product_id = $1
+          AND COALESCE(local_thumbnail_path, '') <> ''
+          AND thumbnail_status = 'collected'
+        LIMIT 1
+      `,
+      [productId]
+    );
+    return result.rows[0]?.local_thumbnail_path || null;
   } finally {
     await client.end();
   }
@@ -588,6 +646,47 @@ function attachLibraryApi(server: any) {
             res.statusCode = 500;
             res.setHeader("Content-Type", "application/json; charset=utf-8");
             res.end(JSON.stringify({ error: error?.message || "unknown_error", items: [] }));
+          }
+        });
+
+        server.middlewares.use(async (req: any, res: any, next: any) => {
+          const url = decodeURIComponent((req.url || "").split("?")[0]);
+          const match = url.match(/^\/api\/library\/thumbnail\/([0-9]{6,8})$/);
+          if (!match) {
+            next();
+            return;
+          }
+          try {
+            const thumbnailPath = await resolveThumbnailPath(match[1]);
+            if (!thumbnailPath) {
+              res.statusCode = 404;
+              res.setHeader("Content-Type", "application/json; charset=utf-8");
+              res.end(JSON.stringify({ ok: false, message: "thumbnail_not_found" }));
+              return;
+            }
+
+            const normalized = normalizeWindowsPath(thumbnailPath);
+            if (!isPathUnderRoots(normalized, resolveThumbnailRoots())) {
+              res.statusCode = 403;
+              res.setHeader("Content-Type", "application/json; charset=utf-8");
+              res.end(JSON.stringify({ ok: false, message: "thumbnail_path_not_allowed" }));
+              return;
+            }
+
+            if (!fs.existsSync(normalized)) {
+              res.statusCode = 404;
+              res.setHeader("Content-Type", "application/json; charset=utf-8");
+              res.end(JSON.stringify({ ok: false, message: "thumbnail_file_not_exists" }));
+              return;
+            }
+
+            res.statusCode = 200;
+            res.setHeader("Content-Type", contentTypeForImage(normalized));
+            fs.createReadStream(normalized).pipe(res);
+          } catch (error: any) {
+            res.statusCode = 500;
+            res.setHeader("Content-Type", "application/json; charset=utf-8");
+            res.end(JSON.stringify({ ok: false, message: error?.message || "thumbnail_failed" }));
           }
         });
 

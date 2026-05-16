@@ -1,7 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
 import "../../App.css";
 
-type CollectStatus = "collected" | "failed" | "queued" | "unknown";
+type CollectStatus =
+  | "collected"
+  | "failed"
+  | "queued"
+  | "pending"
+  | "missing_url"
+  | "unknown";
 
 type SortKey =
   | "updated_desc"
@@ -296,6 +302,8 @@ export default function LibraryPage() {
         <option value="collected">collected</option>
         <option value="failed">failed</option>
         <option value="queued">queued</option>
+        <option value="pending">pending</option>
+        <option value="missing_url">missing_url</option>
         <option value="unknown">unknown</option>
       </select>
 
@@ -353,11 +361,11 @@ export default function LibraryPage() {
               onClick={() => setSelected(item)}
               title="Details"
             >
-              <div className="placeholder">
-                {item.thumbnailPath
-                  ? "Thumb"
-                  : "No Thumb"}
-              </div>
+              {item.thumbnailPath ? (
+                <img src={item.thumbnailPath} alt="" loading="lazy" />
+              ) : (
+                <div className="placeholder">No Thumb</div>
+              )}
             </button>
 
             <div className="meta">

@@ -147,6 +147,8 @@ body {
 }
 
 .status-queued,
+.status-pending,
+.status-missing_url,
 .status-unknown {
   color: #d3ddf2;
 }

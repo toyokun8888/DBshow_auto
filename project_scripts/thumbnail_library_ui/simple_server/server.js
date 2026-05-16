@@ -11,7 +11,11 @@ const ENV_PATH = path.resolve(__dirname, "..", "..", "..", ".env");
 
 const app = express();
 
-app.use(cors());
+app.use(
+  cors({
+    origin: ["http://localhost:5173", "http://127.0.0.1:5173"],
+  })
+);
 app.use(express.json());
 
 function loadEnvFile(envPath) {
@@ -92,7 +96,6 @@ async function main() {
       ok: true,
       app: "seller-completion-simple-server",
        version: "local-mp4-check-001",
-      envPath: ENV_PATH,
       port: PORT,
     });
   });
@@ -123,7 +126,7 @@ async function main() {
               owned_products::numeric / NULLIF(total_products, 0) * 100,
               1
             ) AS completion_rate
-          FROM xxx_VQ013_owned_seller_summary_display
+          FROM xxx_vq027_wiki_seller_summary_display
           ORDER BY ${orderBy}
           LIMIT $1
         `,
@@ -250,7 +253,7 @@ async function main() {
             COALESCE(lm.local_file_size::text, '') AS local_file_size,
             COALESCE(lm.local_last_write_time::text, '') AS local_last_write_time
 
-          FROM xxx_VQ001_moviemaster_unique m
+          FROM xxx_vq028_wiki_seller_missing_products m
 
           LEFT JOIN xxx_vq025_rapidgator_best_links rg
             ON rg.fc2_product_id = m.product_id
@@ -259,11 +262,6 @@ async function main() {
             ON lm.product_id = m.product_id
 
           WHERE m.seller_id = $1
-            AND NOT EXISTS (
-              SELECT 1
-              FROM xxx_VQ002_owned_product_ids o
-              WHERE o.product_id::text = m.product_id
-            )
 
           ORDER BY m.product_id ASC
           LIMIT $2
@@ -364,8 +362,12 @@ async function main() {
         `
           SELECT
             base_title_without_part,
+            fc2_product_id,
+            wiki_seller_name,
+            wiki_display_title,
+            has_local_thumbnail,
+            thumbnail_status,
             sample_file_title,
-            sample_file_url,
             sample_folder_name,
             sample_file_url,
             file_ext_list,
@@ -380,7 +382,7 @@ async function main() {
             max_page_number,
             file_title_list,
             file_url_list
-          FROM xxx_vq022_rapidgator_base_title_summary
+          FROM xxx_vq030_rapidgator_wiki_display
           WHERE COALESCE(NULLIF(normalized_group_key, ''), 'unknown') = $1
           ORDER BY total_records DESC, base_title_without_part ASC
           LIMIT $2
@@ -398,10 +400,17 @@ async function main() {
             .filter(Boolean);
 
           return {
+            productId: String(row.fc2_product_id || ""),
             baseTitle: String(row.base_title_without_part || ""),
             fileTitle: String(row.sample_file_title || ""),
+            sellerName: String(row.wiki_seller_name || ""),
             fileExt: String(row.file_ext_list || ""),
             fileSize: "",
+            thumbnailPath:
+              toBool(row.has_local_thumbnail) && row.fc2_product_id
+                ? `/api/library/thumbnail/${row.fc2_product_id}`
+                : "",
+            thumbnailStatus: String(row.thumbnail_status || "unknown"),
             hasMp4: toNumber(row.mp4_count) > 0,
             hasRar: toNumber(row.rar_count) > 0,
             mp4Count: toNumber(row.mp4_count),
@@ -428,7 +437,7 @@ async function main() {
     });
   });
 
-  app.listen(PORT, () => {
+  app.listen(PORT, "127.0.0.1", () => {
     console.log(`simple server started: http://localhost:${PORT}`);
     console.log(`env: ${ENV_PATH}`);
   });
