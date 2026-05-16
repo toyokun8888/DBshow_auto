@@ -11,6 +11,30 @@ export type MissingProduct = {
   sellerId: string;
   productId: string;
   title: string;
+
+  // Rapidgator 連携
+  hasRapidgator: boolean;
+  hasMp4: boolean;
+  hasRar: boolean;
+
+  rapidgatorMp4Url: string;
+  rapidgatorPageUrl: string;
+
+  rapidgatorMp4Title: string;
+  rapidgatorMp4Size: string;
+
+  rapidgatorTotalRecords: number;
+  rapidgatorMp4Count: number;
+  rapidgatorRarCount: number;
+  rapidgatorAllUrls: string[];
+
+  // ローカル実ファイル候補
+  localFileExists: boolean;
+  localFileCount: number;
+  localFileName: string;
+  localFullPath: string;
+  localFileSize: string;
+  localLastWriteTime: string;
 };
 
 export type SellerSummaryResponse = {

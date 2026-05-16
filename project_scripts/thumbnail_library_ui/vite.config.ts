@@ -26,6 +26,9 @@ type LibraryRow = {
 type OpenPathRequest = {
   ownedFileId?: number | string | null;
   productId?: string | null;
+
+  // SellerCompletion 用 local path
+  fullPath?: string | null;
 };
 
 type OpenPathResolution = {
@@ -191,7 +194,16 @@ async function resolveCurrentPath(payload: OpenPathRequest): Promise<string | nu
     !(payload.ownedFileId === null || payload.ownedFileId === undefined || payload.ownedFileId === "");
   const ownedFileId = hasOwnedFileId ? Number(payload.ownedFileId) : null;
   const productId = (payload.productId || "").trim();
+  // ============================================================
+  // SellerCompletion 用:
+  // localFullPath を直接受け取った場合はそれを優先使用
+  // ============================================================
+  const fullPath = (payload.fullPath || "").trim();
 
+  if (fullPath) {
+    return normalizeWindowsPath(fullPath);
+  }
+  // ============================================================
   if (!ownedFileId && !productId) return null;
 
   loadEnvFile();

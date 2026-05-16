@@ -238,15 +238,94 @@
   padding: 12px;
 }
 
+/* =========================================================
+   Rapidgator追加部分
+========================================================= */
+
+.missing-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 6px;
+}
+
 .missing-product-id {
   font-weight: 700;
-  color: #9bf7be;
   margin-bottom: 6px;
+  font-size: 15px;
+}
+
+/* mp4あり */
+.missing-product-id.available {
+  color: #9bf7be;
+}
+
+/* rar only */
+.missing-product-id.rar-only {
+  color: #ffb86b;
+}
+
+/* rapidgatorなし */
+.missing-product-id.unavailable {
+  color: #ff8a8a;
 }
 
 .missing-title {
   color: #d2ddef;
   line-height: 1.45;
+}
+
+.missing-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.missing-action-button {
+  border: 1px solid #314056;
+  border-radius: 8px;
+  background: #1a2230;
+  color: #e7ecf5;
+  padding: 6px 10px;
+  cursor: pointer;
+  font-weight: 700;
+  font-size: 12px;
+}
+
+.missing-action-button:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+
+.missing-action-button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.missing-action-button.mp4:not(:disabled) {
+  background: #1b3a28;
+  color: #9bf7be;
+}
+
+.missing-action-button.page:not(:disabled) {
+  background: #1f3157;
+  color: #c8d8ff;
+}
+
+.missing-rapidgator-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+  font-size: 12px;
+  color: #aebbd1;
+}
+
+.missing-rapidgator-meta span {
+  border: 1px solid #314056;
+  border-radius: 999px;
+  padding: 4px 8px;
+  background: #111824;
 }
 
 @media (max-width: 980px) {
@@ -268,4 +347,65 @@
     min-width: 0;
     grid-template-columns: repeat(2, 1fr);
   }
+
+  .missing-card-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}
+
+.missing-action-button.rar:not(:disabled) {
+  background: #4a3120;
+  color: #ffcf9b;
+}
+
+/* =========================================================
+   local mp4 candidate
+========================================================= */
+
+.missing-card.local-file-exists {
+  border-color: #4d6b57;
+  background: #18231d;
+}
+
+.missing-local-file-meta {
+  margin-top: 10px;
+  padding: 10px;
+  border: 1px solid #355140;
+  border-radius: 10px;
+  background: #101913;
+
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+
+  font-size: 12px;
+  color: #cfe7d6;
+}
+
+.missing-local-file-meta strong {
+  color: #9bf7be;
+  font-size: 13px;
+}
+
+.missing-local-file-meta span {
+  word-break: break-all;
+  line-height: 1.4;
+}
+
+.missing-local-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.missing-action-button.local:not(:disabled) {
+  background: #1d3d2b;
+  color: #9bf7be;
+}
+
+.missing-action-button.local-folder:not(:disabled) {
+  background: #2e334f;
+  color: #cfd8ff;
 }

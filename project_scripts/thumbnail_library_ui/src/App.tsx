@@ -3,8 +3,9 @@ import "./App.css";
 
 import SellerCompletionPage from "./features/sellerCompletion/SellerCompletionPage";
 import LibraryPage from "./features/library/LibraryPage";
+import RapidgatorResearchPage from "./features/rapidgatorResearch/RapidgatorResearchPage";
 
-type TabKey = "library" | "sellerCompletion";
+type TabKey = "library" | "sellerCompletion" | "rapidgatorResearch";
 
 function App() {
   const [tab, setTab] = useState<TabKey>("sellerCompletion");
@@ -47,9 +48,25 @@ function App() {
         >
           Seller Completion
         </button>
+
+        <button
+          onClick={() => setTab("rapidgatorResearch")}
+          style={{
+            padding: "10px 14px",
+            cursor: "pointer",
+            background: tab === "rapidgatorResearch" ? "#8b5cf6" : "#222",
+            color: "#fff",
+            border: "1px solid #555",
+            borderRadius: "8px",
+          }}
+        >
+          Rapidgator Research
+        </button>
       </header>
 
-      {tab === "library" ? <LibraryPage /> : <SellerCompletionPage />}
+      {tab === "library" && <LibraryPage />}
+      {tab === "sellerCompletion" && <SellerCompletionPage />}
+      {tab === "rapidgatorResearch" && <RapidgatorResearchPage />}
     </div>
   );
 }

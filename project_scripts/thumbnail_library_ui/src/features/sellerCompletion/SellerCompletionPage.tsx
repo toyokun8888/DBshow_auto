@@ -10,6 +10,9 @@ import "./sellerCompletion.css";
 
 const API_BASE = "http://localhost:3001";
 
+const OPEN_FOLDER_ENDPOINT = "/api/library/open-folder";
+const OPEN_FILE_ENDPOINT = "/api/library/open-file";
+
 export default function SellerCompletionPage() {
   const [sellers, setSellers] = useState<SellerSummary[]>([]);
   const [missingItems, setMissingItems] = useState<MissingProduct[]>([]);
@@ -81,6 +84,57 @@ export default function SellerCompletionPage() {
     }
   }
 
+  async function notifyError(message: string) {
+    setErrorMessage(message);
+    alert(message);
+  }
+
+  async function postOpen(
+    endpoint: string,
+    item: MissingProduct,
+    actionLabel: string
+  ) {
+    setErrorMessage("");
+
+    try {
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          productId: item.productId,
+          ownedFileId: null,
+          fullPath: item.localFullPath || "",
+        }),
+      });
+
+      const body = (await response.json().catch(() => ({}))) as {
+        ok?: boolean;
+        message?: string;
+      };
+
+      if (!response.ok || !body.ok) {
+        const msg = body.message || `HTTP ${response.status}`;
+        await notifyError(`${actionLabel} failed: ${msg}`);
+      }
+    } catch (error) {
+      await notifyError(
+        `${actionLabel} failed: ${
+          error instanceof Error ? error.message : "network_error"
+        }`
+      );
+    }
+  }
+
+  async function openFolder(item: MissingProduct) {
+    await postOpen(OPEN_FOLDER_ENDPOINT, item, "Open folder");
+  }
+
+  async function openFile(item: MissingProduct) {
+    await postOpen(OPEN_FILE_ENDPOINT, item, "Open file");
+  }
+
   const filteredSellers = useMemo(() => {
     const query = sellerQuery.trim().toLowerCase();
 
@@ -106,7 +160,9 @@ export default function SellerCompletionPage() {
     return missingItems.filter((item) => {
       return (
         item.productId.toLowerCase().includes(query) ||
-        item.title.toLowerCase().includes(query)
+        item.title.toLowerCase().includes(query) ||
+        item.localFileName.toLowerCase().includes(query) ||
+        item.localFullPath.toLowerCase().includes(query)
       );
     });
   }, [missingItems, missingQuery]);
@@ -162,7 +218,9 @@ export default function SellerCompletionPage() {
                   onClick={() => void openSeller(seller)}
                 >
                   <div className="seller-row-main">
-                    <span className="seller-name">{seller.sellerName || seller.sellerId}</span>
+                    <span className="seller-name">
+                      {seller.sellerName || seller.sellerId}
+                    </span>
                     <span className="seller-rate">{seller.completionRate}%</span>
                   </div>
 
@@ -176,11 +234,18 @@ export default function SellerCompletionPage() {
                   <div className="seller-progress">
                     <div
                       className="seller-progress-fill"
-                      style={{ width: `${Math.min(Math.max(seller.completionRate, 0), 100)}%` }}
+                      style={{
+                        width: `${Math.min(
+                          Math.max(seller.completionRate, 0),
+                          100
+                        )}%`,
+                      }}
                     />
                   </div>
 
-                  <div className="seller-missing">missing: {seller.missingProducts}</div>
+                  <div className="seller-missing">
+                    missing: {seller.missingProducts}
+                  </div>
                 </button>
               );
             })}
@@ -189,7 +254,9 @@ export default function SellerCompletionPage() {
       </aside>
 
       <main className="seller-completion-main">
-        {errorMessage && <div className="seller-completion-error">{errorMessage}</div>}
+        {errorMessage && (
+          <div className="seller-completion-error">{errorMessage}</div>
+        )}
 
         {!selectedSeller ? (
           <div className="seller-empty">
@@ -228,7 +295,7 @@ export default function SellerCompletionPage() {
               <input
                 value={missingQuery}
                 onChange={(event) => setMissingQuery(event.target.value)}
-                placeholder="未所持作品をID/タイトルで検索"
+                placeholder="未所持作品をID/タイトル/local pathで検索"
               />
 
               <span>
@@ -240,17 +307,161 @@ export default function SellerCompletionPage() {
               <div className="seller-completion-loading">missing loading...</div>
             ) : (
               <section className="missing-list">
-                {filteredMissingItems.map((item) => (
-                  <article key={item.productId} className="missing-card">
-                    <div className="missing-product-id">{item.productId}</div>
-                    <div className="missing-title">{item.title || "(no title)"}</div>
-                  </article>
-                ))}
+                {filteredMissingItems.map((item) => {
+                  const productIdClass = item.hasMp4
+                    ? "missing-product-id available"
+                    : item.hasRapidgator
+                      ? "missing-product-id rar-only"
+                      : "missing-product-id unavailable";
+
+                  const cardClass = item.localFileExists
+                    ? "missing-card local-file-exists"
+                    : "missing-card";
+
+                  const canOpenLocalFile =
+                    item.localFileExists &&
+                    item.localFullPath.trim().length > 0;
+
+                  return (
+                    <article key={item.productId} className={cardClass}>
+                      <div className="missing-card-header">
+                        <div className={productIdClass}>{item.productId}</div>
+
+                        <div className="missing-actions">
+                          <button
+                            type="button"
+                            className="missing-action-button mp4"
+                            disabled={!item.rapidgatorMp4Url}
+                            onClick={() => {
+                              if (!item.rapidgatorMp4Url) {
+                                alert("mp4ありません");
+                                return;
+                              }
+
+                              window.open(item.rapidgatorMp4Url, "_blank");
+                            }}
+                          >
+                            MP4
+                          </button>
+
+                          <button
+                            type="button"
+                            className="missing-action-button page"
+                            disabled={!item.rapidgatorPageUrl}
+                            onClick={() => {
+                              if (!item.rapidgatorPageUrl) {
+                                alert("pageありません");
+                                return;
+                              }
+
+                              window.open(item.rapidgatorPageUrl, "_blank");
+                            }}
+                          >
+                            PAGE
+                          </button>
+
+                          <button
+                            type="button"
+                            className="missing-action-button rar"
+                            disabled={
+                              !item.hasRar ||
+                              !item.rapidgatorAllUrls ||
+                              item.rapidgatorAllUrls.length === 0
+                            }
+                            onClick={async () => {
+                              const urls = item.rapidgatorAllUrls || [];
+
+                              if (urls.length === 0) {
+                                alert("rarありません");
+                                return;
+                              }
+
+                              const tabs = urls.map(() =>
+                                window.open("about:blank", "_blank")
+                              );
+
+                              const blockedCount = tabs.filter((tab) => !tab).length;
+
+                              if (blockedCount > 0) {
+                                alert(
+                                  `ブラウザにより ${blockedCount} 個のタブがブロックされました。ポップアップ許可を確認してください。`
+                                );
+                              }
+
+                              for (let i = 0; i < urls.length; i += 1) {
+                                const tab = tabs[i];
+
+                                if (!tab) {
+                                  continue;
+                                }
+
+                                const wait =
+                                  2000 + Math.floor(Math.random() * 2000);
+
+                                await new Promise((resolve) =>
+                                  setTimeout(resolve, wait)
+                                );
+
+                                tab.location.href = urls[i];
+                              }
+                            }}
+                          >
+                            PARTS({item.rapidgatorRarCount})
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="missing-title">{item.title || "(no title)"}</div>
+
+                      {item.localFileExists && (
+                        <div className="missing-local-file-meta">
+                          <strong>実ファイル候補あり</strong>
+                          <span>count: {item.localFileCount}</span>
+                          {item.localFileName && <span>{item.localFileName}</span>}
+                          {item.localFullPath && <span>{item.localFullPath}</span>}
+
+                          <div className="missing-local-actions">
+                            <button
+                              type="button"
+                              className="missing-action-button local"
+                              disabled={!canOpenLocalFile}
+                              onClick={() => void openFile(item)}
+                            >
+                              Open file
+                            </button>
+
+                            <button
+                              type="button"
+                              className="missing-action-button local-folder"
+                              disabled={!canOpenLocalFile}
+                              onClick={() => void openFolder(item)}
+                            >
+                              Open folder
+                            </button>
+                          </div>
+                        </div>
+                      )}
+
+                      {item.hasRapidgator && (
+                        <div className="missing-rapidgator-meta">
+                          <span>total: {item.rapidgatorTotalRecords}</span>
+                          <span>mp4: {item.rapidgatorMp4Count}</span>
+                          <span>rar: {item.rapidgatorRarCount}</span>
+                          {item.rapidgatorMp4Size && (
+                            <span>{item.rapidgatorMp4Size}</span>
+                          )}
+                        </div>
+                      )}
+                    </article>
+                  );
+                })}
 
                 {filteredMissingItems.length === 0 && (
                   <div className="seller-empty">
                     <h2>未所持なし</h2>
-                    <p>このsellerはコンプリート済み、または検索条件に一致しません。</p>
+                    <p>
+                      このsellerはコンプリート済み、または検索条件に一致しません。
+                    </p>
                   </div>
                 )}
               </section>
