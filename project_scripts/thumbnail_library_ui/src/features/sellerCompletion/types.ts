@@ -9,8 +9,13 @@ export type SellerSummary = {
 
 export type MissingProduct = {
   sellerId: string;
+  sellerName: string;
   productId: string;
   title: string;
+  thumbnailPath: string;
+  thumbnailStatus: string;
+  isOwned: boolean;
+  isLibraryOwned: boolean;
 
   // Rapidgator 連携
   hasRapidgator: boolean;

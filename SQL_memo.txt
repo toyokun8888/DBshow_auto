@@ -1,0 +1,23 @@
+node phase2_file_pipeline_recursive2.js --mode dry-run --input "P:\new_DL\hogehoge" --log-dir "P:\new_DL\logs"
+
+//上記はテスト用
+
+
+node phase2_file_pipeline_recursive2.js --mode execute --confirm-execute YES --input "P:\new_DL\hogehoge" --log-dir "P:\new_DL\logs"
+
+//こっちは本番、DB接続あり
+
+ファイルの中のmp4は、ｆｃ２ならＤＢと見比べてリネーム移動
+それ以外は拡張子ごとにいどう
+
+
+
+PS用コマンド
+テスト
+
+d C:\Users\toyoaki\Desktop\filedatachange\project_scripts\phase2_execute
+
+node phase2_file_pipeline2.js --mode dry-run --input "P:\new_DL\hogehoge" --log-dir "P:\new_DL\logs" --final-base "P:\new_DL\final" --unmatched-dir "P:\new_DL\unmatched" --hold-dir "P:\new_DL\hold" --error-dir "P:\new_DL\error" --inspection-dir "P:\new_DL\inspection"
+
+
+

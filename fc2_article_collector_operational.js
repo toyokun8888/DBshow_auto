@@ -33,14 +33,14 @@ puppeteer.use(StealthPlugin());
 const BASE_URL = "https://adult.contents.fc2.com";
 
 // 再開したい場合はここを変更
-const START_PAGE = 2501;
+const START_PAGE = 1;
 
 // 最大安全ページ数
-const MAX_PAGE = 10000;
+const MAX_PAGE = 10;
 
 // 今回の古いmaster最大ID
 // これ以下まで到達したら、現在差分を埋めたと判断する
-const BACKFILL_BASELINE_PRODUCT_ID = 4699535;
+const BACKFILL_BASELINE_PRODUCT_ID = 1000000;
 
 // この回数連続で「基準IDより新しい作品がない」なら停止
 const STOP_CONSECUTIVE_NO_NEWER_PAGE_COUNT = 20;

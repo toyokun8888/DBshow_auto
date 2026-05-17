@@ -21,6 +21,15 @@ body {
   font-family: "Segoe UI", sans-serif;
 }
 
+.library-app {
+  height: calc(100svh - 65px);
+  min-height: 0;
+  padding: 10px 12px 12px;
+  grid-template-rows: auto auto auto minmax(0, 1fr);
+  gap: 8px;
+  overflow: hidden;
+}
+
 .topbar {
   display: flex;
   align-items: center;
@@ -46,6 +55,16 @@ body {
   display: grid;
   grid-template-columns: 1.6fr 1fr 1fr 1fr;
   gap: 8px;
+}
+
+.library-controls {
+  grid-template-columns:
+    minmax(120px, 0.9fr)
+    minmax(180px, 1.4fr)
+    minmax(140px, 1fr)
+    minmax(120px, 0.75fr)
+    minmax(120px, 0.75fr)
+    auto;
 }
 
 .controls input,
@@ -76,11 +95,25 @@ body {
   gap: 12px;
 }
 
+.library-app .grid {
+  min-height: 0;
+  overflow: hidden;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  grid-auto-rows: minmax(0, 1fr);
+  gap: 8px;
+}
+
 .card {
   border: 1px solid #2f3a4a;
   border-radius: 8px;
   overflow: hidden;
   background: #171f2b;
+}
+
+.library-app .card {
+  min-height: 0;
+  display: grid;
+  grid-template-rows: minmax(72px, 0.9fr) minmax(0, 1fr);
 }
 
 .thumb {
@@ -92,10 +125,17 @@ body {
   cursor: pointer;
 }
 
+.library-app .thumb {
+  height: 100%;
+  aspect-ratio: auto;
+  min-height: 72px;
+}
+
 .thumb img {
   width: 100%;
   height: 100%;
-  object-fit: cover;
+  object-fit: contain;
+  background: #0e131b;
 }
 
 .placeholder {
@@ -111,6 +151,12 @@ body {
   gap: 6px;
 }
 
+.library-app .meta {
+  padding: 8px;
+  gap: 4px;
+  min-height: 0;
+}
+
 .product {
   font-weight: 700;
 }
@@ -123,9 +169,21 @@ body {
   overflow: hidden;
 }
 
+.library-app .title {
+  font-size: 12px;
+  line-height: 1.25;
+  max-height: 3.75em;
+}
+
 .seller {
   font-size: 12px;
   color: #b7c5dd;
+}
+
+.library-app .seller {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .status {
@@ -157,6 +215,17 @@ body {
   display: flex;
   justify-content: center;
   gap: 8px;
+}
+
+.library-pager {
+  align-items: center;
+  justify-content: flex-end;
+  white-space: nowrap;
+}
+
+.library-pager span {
+  color: #b7c5dd;
+  font-size: 13px;
 }
 
 .pager button {
@@ -219,5 +288,16 @@ body {
 @media (max-width: 900px) {
   .controls {
     grid-template-columns: 1fr;
+  }
+
+  .library-app {
+    height: auto;
+    min-height: 100vh;
+    overflow: visible;
+  }
+
+  .library-app .grid {
+    overflow: visible;
+    grid-auto-rows: auto;
   }
 }

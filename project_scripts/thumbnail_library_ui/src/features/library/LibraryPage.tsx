@@ -250,8 +250,30 @@ export default function LibraryPage() {
       "Open file"
     );
   }
+  const pager = (
+    <div className="pager library-pager">
+      <button
+        disabled={page <= 1}
+        onClick={() => setPage((v) => v - 1)}
+      >
+        Prev
+      </button>
+
+      <span>
+        {page} / {totalPages}
+      </span>
+
+      <button
+        disabled={page >= totalPages}
+        onClick={() => setPage((v) => v + 1)}
+      >
+        Next
+      </button>
+    </div>
+  );
+
   return (
-  <div className="app">
+  <div className="app library-app">
     <header className="topbar">
       <h1>Local Library</h1>
 
@@ -264,7 +286,7 @@ export default function LibraryPage() {
       </button>
     </header>
 
-    <section className="controls">
+    <section className="controls library-controls">
       <input
         value={idQuery}
         onChange={(e) => setIdQuery(e.target.value)}
@@ -329,6 +351,8 @@ export default function LibraryPage() {
           Product desc
         </option>
       </select>
+
+      {pager}
     </section>
 
     <section className="summary">
@@ -394,22 +418,6 @@ export default function LibraryPage() {
         ))}
       </main>
     )}
-
-    <footer className="pager">
-      <button
-        disabled={page <= 1}
-        onClick={() => setPage((v) => v - 1)}
-      >
-        Prev
-      </button>
-
-      <button
-        disabled={page >= totalPages}
-        onClick={() => setPage((v) => v + 1)}
-      >
-        Next
-      </button>
-    </footer>
 
     {selected && (
       <div

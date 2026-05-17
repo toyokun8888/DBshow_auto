@@ -1,14 +1,14 @@
 // ============================================================
 // fc2_wiki_thumbnail_collector_operational.js
-// FC2 Wiki thumbnail collector for owned items.
+// FC2 Wiki thumbnail collector for the FC2 Wiki article pool.
 //
 // Purpose:
-// - Download thumbnails for owned FC2 works first
+// - Download thumbnails from xxx_tm008_fc2_wiki_articles after owned items are mostly done
 // - Save images under ./fc2_sum using {product_id}.{ext}
 // - Record progress in xxx_tm009_fc2_wiki_thumbnail_assets
 //
 // Safety:
-// - Default daily cap is 100 downloads
+// - Default daily cap is 5000 downloads
 // - Random delay is inserted before every network request
 // - Only contents-thumbnail2.fc2.com HTTPS URLs are allowed
 // - No DELETE, DROP, TRUNCATE, or file cleanup
@@ -35,9 +35,11 @@ const OUTPUT_DIR = path.join(__dirname, "fc2_sum");
 //   100
 // );
 
+const TARGET_SCOPE = "wiki_all_overnight";
+
 const MAX_DOWNLOADS = Math.min(
-  Math.max(Number(process.env.FC2_THUMB_COLLECT_MAX_DOWNLOADS || 10000), 1),
-  10000
+  Math.max(Number(process.env.FC2_THUMB_COLLECT_MAX_DOWNLOADS || 5000), 1),
+  5000
 );
 
 // const DAILY_CAP = Math.min(
@@ -45,7 +47,10 @@ const MAX_DOWNLOADS = Math.min(
 //   100
 // );
 
-const DAILY_CAP = 10000;
+const DAILY_CAP = Math.min(
+  Math.max(Number(process.env.FC2_THUMB_COLLECT_DAILY_CAP || 5000), 1),
+  5000
+);
 
 const BATCH_PAUSE_EVERY = 300;
 const BATCH_PAUSE_MS = 3 * 60 * 1000;
@@ -92,8 +97,11 @@ function assertSafetyGate() {
   //   throw new Error("MAX_DOWNLOADS must be 100 or less.");
   // }
 
-  if (MAX_DOWNLOADS > 10000) {
-    throw new Error("MAX_DOWNLOADS must be 10000 or less.");
+  if (MAX_DOWNLOADS > 5000) {
+    throw new Error("MAX_DOWNLOADS must be 5000 or less.");
+  }
+  if (DAILY_CAP > 5000) {
+    throw new Error("DAILY_CAP must be 5000 or less.");
   }
 }
 
@@ -222,9 +230,7 @@ function downloadFile(url, outputPath) {
 }
 
 async function collectTargets(client) {
-  const todayCollected = await countTodayCollected(client);
-  const remainingDailyCap = Math.max(DAILY_CAP - todayCollected, 0);
-  const effectiveLimit = Math.min(MAX_DOWNLOADS, remainingDailyCap);
+  const effectiveLimit = Math.min(MAX_DOWNLOADS, DAILY_CAP);
 
   if (effectiveLimit <= 0) {
     return [];
@@ -232,24 +238,25 @@ async function collectTargets(client) {
 
   const result = await client.query(
     `
-      SELECT DISTINCT ON (product_id)
-        product_id,
-        thumbnail_url,
+      SELECT DISTINCT ON (a.product_id)
+        a.product_id,
+        a.thumbnail_url,
         '' AS source_wiki_url,
-        COALESCE(attempt_count, 0) AS attempt_count
-      FROM public.xxx_vq029_owned_file_thumbnail_status
-      WHERE owned_without_thumbnail = true
-        AND COALESCE(thumbnail_url, '') <> ''
-        AND COALESCE(collect_status, '') NOT IN ('collected', 'failed', 'missing_url')
+        COALESCE(t.attempt_count, 0) AS attempt_count
+      FROM public.xxx_tm008_fc2_wiki_articles a
+      LEFT JOIN public.xxx_tm009_fc2_wiki_thumbnail_assets t
+        ON t.product_id = a.product_id
+      WHERE COALESCE(a.thumbnail_url, '') <> ''
+        AND COALESCE(t.thumbnail_status, '') NOT IN ('collected', 'failed', 'missing_url')
       ORDER BY
-        product_id,
-        CASE COALESCE(collect_status, '')
+        a.product_id,
+        CASE COALESCE(t.thumbnail_status, '')
           WHEN 'pending' THEN 0
-          WHEN 'unknown' THEN 1
           ELSE 2
         END,
-        downloaded_at NULLS FIRST,
-        last_checked_at NULLS FIRST
+        t.downloaded_at NULLS FIRST,
+        t.last_checked_at NULLS FIRST,
+        a.thumbnail_url
       LIMIT $1
     `,
     [effectiveLimit]
@@ -352,9 +359,9 @@ async function createRunLog(client, targetsFound) {
         targets_found,
         updated_at
       )
-      VALUES ($1, 'running', 'owned', $2, $3, $4, $5, $6, $7, now())
+      VALUES ($1, 'running', $8, $2, $3, $4, $5, $6, $7, now())
     `,
-    [RUN_ID, MAX_DOWNLOADS, DAILY_CAP, MIN_DELAY_MS, MAX_DELAY_MS, MAX_ATTEMPTS, targetsFound]
+    [RUN_ID, MAX_DOWNLOADS, DAILY_CAP, MIN_DELAY_MS, MAX_DELAY_MS, MAX_ATTEMPTS, targetsFound, TARGET_SCOPE]
   );
 }
 
@@ -436,6 +443,24 @@ async function countOwnedView(client) {
   return result.rows[0];
 }
 
+async function countWikiPool(client) {
+  const result = await client.query(`
+    SELECT
+      COUNT(*)::bigint AS wiki_article_rows,
+      COUNT(DISTINCT a.product_id)::bigint AS wiki_products,
+      COUNT(DISTINCT a.product_id) FILTER (WHERE COALESCE(a.thumbnail_url, '') <> '')::bigint AS wiki_products_with_url,
+      COUNT(DISTINCT a.product_id) FILTER (WHERE t.product_id IS NULL)::bigint AS wiki_untracked_products,
+      COUNT(DISTINCT a.product_id) FILTER (
+        WHERE COALESCE(a.thumbnail_url, '') <> ''
+          AND COALESCE(t.thumbnail_status, '') NOT IN ('collected', 'failed', 'missing_url')
+      )::bigint AS wiki_remaining_targets
+    FROM public.xxx_tm008_fc2_wiki_articles a
+    LEFT JOIN public.xxx_tm009_fc2_wiki_thumbnail_assets t
+      ON t.product_id = a.product_id
+  `);
+  return result.rows[0];
+}
+
 async function main() {
   assertSafetyGate();
   ensureOutputDir();
@@ -452,6 +477,7 @@ async function main() {
   try {
     const beforeAssets = await countStatus(client);
     const beforeOwned = await countOwnedView(client);
+    const beforeWiki = await countWikiPool(client);
     const todayCollected = await countTodayCollected(client);
     const targets = await collectTargets(client);
     await createRunLog(client, targets.length);
@@ -459,7 +485,7 @@ async function main() {
 
     console.log("=".repeat(70));
     console.log("FC2 Wiki Thumbnail Collector");
-    console.log(`target      : owned`);
+    console.log(`target      : ${TARGET_SCOPE}`);
     console.log(`max         : ${MAX_DOWNLOADS}`);
     console.log(`dailyCap    : ${DAILY_CAP}`);
     console.log(`todayDone   : ${todayCollected}`);
@@ -469,7 +495,7 @@ async function main() {
     console.log(`batchPause  : every ${BATCH_PAUSE_EVERY} items / ${Math.floor(BATCH_PAUSE_MS / 60000)} min`);
     console.log(`output      : ${OUTPUT_DIR}`);
     console.log(`targets     : ${targets.length}`);
-    console.log(`before      : ${JSON.stringify({ beforeAssets, beforeOwned })}`);
+    console.log(`before      : ${JSON.stringify({ beforeAssets, beforeOwned, beforeWiki })}`);
     console.log("=".repeat(70));
 
     for (const row of targets) {
@@ -550,6 +576,7 @@ async function main() {
 
     const afterAssets = await countStatus(client);
     const afterOwned = await countOwnedView(client);
+    const afterWiki = await countWikiPool(client);
 
     console.log("=".repeat(70));
     console.log("DONE");
@@ -557,7 +584,7 @@ async function main() {
     console.log(`run_failed  : ${failedCount}`);
     console.log(`run_existing: ${skippedCount}`);
     console.log(`processed   : ${processedCount}`);
-    console.log(`after       : ${JSON.stringify({ afterAssets, afterOwned })}`);
+    console.log(`after       : ${JSON.stringify({ afterAssets, afterOwned, afterWiki })}`);
     console.log("=".repeat(70));
     await finishRunLog(client, "completed", successCount, failedCount, skippedCount);
   } catch (error) {

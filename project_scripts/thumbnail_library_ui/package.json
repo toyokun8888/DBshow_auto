@@ -8,6 +8,7 @@
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview",
+    "serve:prod": "vite preview --host 127.0.0.1 --port 80 --strictPort",
     "verify:runtime": "powershell -ExecutionPolicy Bypass -File ./scripts/runtime_verify.ps1"
   },
   "dependencies": {

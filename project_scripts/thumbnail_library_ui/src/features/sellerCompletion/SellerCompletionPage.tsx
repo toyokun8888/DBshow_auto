@@ -18,10 +18,14 @@ export default function SellerCompletionPage() {
   const [missingItems, setMissingItems] = useState<MissingProduct[]>([]);
   const [selectedSeller, setSelectedSeller] = useState<SellerSummary | null>(null);
   const [sellerQuery, setSellerQuery] = useState("");
+  const [globalQuery, setGlobalQuery] = useState("");
   const [missingQuery, setMissingQuery] = useState("");
-  const [sort, setSort] = useState<SellerSummarySort>("missing_asc");
+  const [hideLibraryOwned, setHideLibraryOwned] = useState(false);
+  const [resultMode, setResultMode] = useState<"seller" | "global">("seller");
+  const [sort, setSort] = useState<SellerSummarySort>("owned_desc");
   const [loadingSellers, setLoadingSellers] = useState(true);
   const [loadingMissing, setLoadingMissing] = useState(false);
+  const [loadingFlags, setLoadingFlags] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
 
   useEffect(() => {
@@ -56,8 +60,10 @@ export default function SellerCompletionPage() {
 
   async function openSeller(seller: SellerSummary) {
     setSelectedSeller(seller);
+    setResultMode("seller");
     setMissingItems([]);
     setMissingQuery("");
+    setHideLibraryOwned(false);
     setLoadingMissing(true);
     setErrorMessage("");
 
@@ -76,8 +82,86 @@ export default function SellerCompletionPage() {
       }
 
       setMissingItems(body.items || []);
+      void loadSellerFlags(seller.sellerId);
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "seller-missing network error");
+      setMissingItems([]);
+    } finally {
+      setLoadingMissing(false);
+    }
+  }
+
+  async function loadSellerFlags(sellerId: string) {
+    if (!sellerId) return;
+
+    setLoadingFlags(true);
+
+    try {
+      const encodedSellerId = encodeURIComponent(sellerId);
+      const response = await fetch(
+        `${API_BASE}/api/seller-missing/${encodedSellerId}?limit=5000&includeRapidgator=1`
+      );
+
+      if (!response.ok) {
+        throw new Error(`seller flags HTTP ${response.status}`);
+      }
+
+      const body = (await response.json()) as SellerMissingResponse;
+
+      if (!body.ok) {
+        throw new Error(body.message || "seller flags failed");
+      }
+
+      const enrichByProductId = new Map(
+        (body.items || []).map((item) => [item.productId, item])
+      );
+
+      setMissingItems((currentItems) =>
+        currentItems.map((item) => enrichByProductId.get(item.productId) || item)
+      );
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "seller flags network error");
+    } finally {
+      setLoadingFlags(false);
+    }
+  }
+
+  async function searchAllProducts() {
+    const query = globalQuery.trim();
+
+    if (query.length < 2) {
+      setErrorMessage("Search needs at least 2 characters.");
+      return;
+    }
+
+    setSelectedSeller(null);
+    setResultMode("global");
+    setMissingItems([]);
+    setMissingQuery("");
+    setHideLibraryOwned(false);
+    setLoadingMissing(true);
+    setErrorMessage("");
+
+    try {
+      const response = await fetch(
+        `${API_BASE}/api/seller-products/search?q=${encodeURIComponent(query)}&limit=5000`
+      );
+
+      if (!response.ok) {
+        throw new Error(`seller-products search HTTP ${response.status}`);
+      }
+
+      const body = (await response.json()) as SellerMissingResponse;
+
+      if (!body.ok) {
+        throw new Error(body.message || "seller-products search failed");
+      }
+
+      setMissingItems(body.items || []);
+    } catch (error) {
+      setErrorMessage(
+        error instanceof Error ? error.message : "seller-products search network error"
+      );
       setMissingItems([]);
     } finally {
       setLoadingMissing(false);
@@ -152,20 +236,37 @@ export default function SellerCompletionPage() {
 
   const filteredMissingItems = useMemo(() => {
     const query = missingQuery.trim().toLowerCase();
+    const baseItems = hideLibraryOwned
+      ? missingItems.filter((item) => !item.isLibraryOwned)
+      : missingItems;
 
     if (!query) {
-      return missingItems;
+      return baseItems;
     }
 
-    return missingItems.filter((item) => {
+    return baseItems.filter((item) => {
       return (
         item.productId.toLowerCase().includes(query) ||
         item.title.toLowerCase().includes(query) ||
+        item.sellerId.toLowerCase().includes(query) ||
+        item.sellerName.toLowerCase().includes(query) ||
         item.localFileName.toLowerCase().includes(query) ||
         item.localFullPath.toLowerCase().includes(query)
       );
     });
-  }, [missingItems, missingQuery]);
+  }, [hideLibraryOwned, missingItems, missingQuery]);
+
+  const activeStats = useMemo(() => {
+    return {
+      thumbnails: missingItems.filter((item) => Boolean(item.thumbnailPath)).length,
+      owned: missingItems.filter((item) => item.isOwned).length,
+      libraryOwned: missingItems.filter((item) => item.isLibraryOwned).length,
+      missing: missingItems.filter((item) => !item.isOwned).length,
+      rapidgator: missingItems.filter((item) => item.hasRapidgator).length,
+    };
+  }, [missingItems]);
+
+  const hasActiveResults = selectedSeller !== null || resultMode === "global";
 
   return (
     <div className="seller-completion-page">
@@ -197,6 +298,43 @@ export default function SellerCompletionPage() {
             <option value="owned_desc">所持 多い順</option>
             <option value="total_desc">総作品 多い順</option>
           </select>
+
+          <select
+            value={selectedSeller?.sellerId || ""}
+            onChange={(event) => {
+              const seller = sellers.find(
+                (item) => item.sellerId === event.target.value
+              );
+
+              if (seller) {
+                void openSeller(seller);
+              }
+            }}
+          >
+            <option value="">Jump to seller</option>
+            {filteredSellers.map((seller) => (
+              <option key={seller.sellerId} value={seller.sellerId}>
+                {seller.sellerName || seller.sellerId} ({seller.sellerId})
+              </option>
+            ))}
+          </select>
+
+          <div className="global-product-search">
+            <input
+              value={globalQuery}
+              onChange={(event) => setGlobalQuery(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  void searchAllProducts();
+                }
+              }}
+              placeholder="product ID / title / seller"
+            />
+
+            <button type="button" onClick={() => void searchAllProducts()}>
+              Search all
+            </button>
+          </div>
         </div>
 
         <div className="seller-completion-count">
@@ -226,6 +364,10 @@ export default function SellerCompletionPage() {
 
                   <div className="seller-row-sub">
                     <span>{seller.sellerId}</span>
+                  </div>
+
+                  <div className="seller-row-metrics">
+                    <span className="seller-rate">{seller.completionRate}%</span>
                     <span>
                       {seller.ownedProducts} / {seller.totalProducts}
                     </span>
@@ -258,7 +400,7 @@ export default function SellerCompletionPage() {
           <div className="seller-completion-error">{errorMessage}</div>
         )}
 
-        {!selectedSeller ? (
+        {!hasActiveResults ? (
           <div className="seller-empty">
             <h2>sellerを選択してください</h2>
             <p>左の一覧からsellerを選ぶと、未所持作品が表示されます。</p>
@@ -267,26 +409,43 @@ export default function SellerCompletionPage() {
           <>
             <section className="selected-seller-panel">
               <div>
-                <h2>{selectedSeller.sellerName || selectedSeller.sellerId}</h2>
-                <p>{selectedSeller.sellerId}</p>
+                <h2>
+                  {selectedSeller
+                    ? selectedSeller.sellerName || selectedSeller.sellerId
+                    : "Global product search"}
+                </h2>
+                <p>
+                  {selectedSeller
+                    ? selectedSeller.sellerId
+                    : `query: ${globalQuery.trim()}`}
+                </p>
               </div>
 
               <div className="selected-seller-stats">
                 <div>
                   <span>所持</span>
-                  <strong>{selectedSeller.ownedProducts}</strong>
+                  <strong>{selectedSeller ? selectedSeller.ownedProducts : activeStats.owned}</strong>
                 </div>
                 <div>
                   <span>総作品</span>
-                  <strong>{selectedSeller.totalProducts}</strong>
+                  <strong>{selectedSeller ? selectedSeller.totalProducts : missingItems.length}</strong>
                 </div>
                 <div>
                   <span>未所持</span>
-                  <strong>{selectedSeller.missingProducts}</strong>
+                  <strong>{selectedSeller ? selectedSeller.missingProducts : activeStats.missing}</strong>
                 </div>
                 <div>
                   <span>達成率</span>
-                  <strong>{selectedSeller.completionRate}%</strong>
+                  <strong>{selectedSeller ? selectedSeller.completionRate + "%" : activeStats.rapidgator}</strong>
+                </div>
+                <div className="selected-seller-filter">
+                  <span>正規所持</span>
+                  <button
+                    type="button"
+                    onClick={() => setHideLibraryOwned((value) => !value)}
+                  >
+                    {hideLibraryOwned ? "全件表示" : `除外 (${activeStats.libraryOwned})`}
+                  </button>
                 </div>
               </div>
             </section>
@@ -299,8 +458,20 @@ export default function SellerCompletionPage() {
               />
 
               <span>
-                missing: {filteredMissingItems.length} / {missingItems.length}
+                items: {filteredMissingItems.length} / {missingItems.length} missing: {activeStats.missing}
+                {hideLibraryOwned && ` library-owned excluded: ${activeStats.libraryOwned}`}
               </span>
+
+              {selectedSeller && (
+                <button
+                  type="button"
+                  className="missing-toolbar-button"
+                  disabled={loadingMissing || loadingFlags}
+                  onClick={() => void loadSellerFlags(selectedSeller.sellerId)}
+                >
+                  {loadingFlags ? "Loading flags..." : "Load flags"}
+                </button>
+              )}
             </section>
 
             {loadingMissing ? (
@@ -325,7 +496,36 @@ export default function SellerCompletionPage() {
                   return (
                     <article key={item.productId} className={cardClass}>
                       <div className="missing-card-header">
-                        <div className={productIdClass}>{item.productId}</div>
+                        <div className="missing-card-main">
+                          <div className="missing-thumb">
+                            {item.thumbnailPath ? (
+                              <img
+                                src={`${API_BASE}${item.thumbnailPath}`}
+                                alt=""
+                                loading="lazy"
+                              />
+                            ) : (
+                              <span>No Thumb</span>
+                            )}
+                          </div>
+
+                          <div className="missing-card-text">
+                            <div className={productIdClass}>{item.productId}</div>
+
+                            <div className="missing-title">
+                              {item.title || "(no title)"}
+                            </div>
+
+                            <div className="missing-seller">
+                              {item.sellerName || item.sellerId || "seller unknown"}
+                              {item.isOwned && <span>owned</span>}
+                              {item.isLibraryOwned && <span>library</span>}
+                              {item.thumbnailStatus && (
+                                <span>thumb: {item.thumbnailStatus}</span>
+                              )}
+                            </div>
+                          </div>
+                        </div>
 
                         <div className="missing-actions">
                           <button
@@ -410,8 +610,6 @@ export default function SellerCompletionPage() {
                           </button>
                         </div>
                       </div>
-
-                      <div className="missing-title">{item.title || "(no title)"}</div>
 
                       {item.localFileExists && (
                         <div className="missing-local-file-meta">
