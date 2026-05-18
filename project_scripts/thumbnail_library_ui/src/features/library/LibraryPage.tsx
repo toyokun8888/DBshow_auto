@@ -13,7 +13,10 @@ type SortKey =
   | "updated_desc"
   | "updated_asc"
   | "product_asc"
-  | "product_desc";
+  | "product_desc"
+  | "file_size_desc";
+
+type ResolutionClass = "4K" | "HD" | "LOW";
 
 type LibraryItem = {
   ownedFileId?: number;
@@ -24,6 +27,12 @@ type LibraryItem = {
   thumbnailPath?: string;
   collectStatus: CollectStatus;
   updatedAt?: string;
+  fileSize?: number | string;
+  file_size?: number | string;
+  localFileSize?: number | string;
+  videoWidth?: number | string;
+  videoHeight?: number | string;
+  resolutionClass?: ResolutionClass | "";
 };
 
 const PAGE_SIZE = 24;
@@ -40,6 +49,8 @@ export default function LibraryPage() {
   const [sellerFilter, setSellerFilter] = useState("all");
   const [statusFilter, setStatusFilter] =
     useState<CollectStatus | "all">("all");
+  const [resolutionFilter, setResolutionFilter] =
+    useState<ResolutionClass | "all">("all");
   const [sortKey, setSortKey] =
     useState<SortKey>("updated_desc");
   const [page, setPage] = useState(1);
@@ -53,7 +64,7 @@ export default function LibraryPage() {
 
   useEffect(() => {
     setPage(1);
-  }, [idQuery, titleQuery, sellerFilter, statusFilter, sortKey]);
+  }, [idQuery, titleQuery, sellerFilter, statusFilter, resolutionFilter, sortKey]);
 
   async function loadItems() {
     setLoading(true);
@@ -149,6 +160,13 @@ export default function LibraryPage() {
       }
 
       if (
+        resolutionFilter !== "all" &&
+        v.resolutionClass !== resolutionFilter
+      ) {
+        return false;
+      }
+
+      if (
         iq &&
         !v.productId.toLowerCase().includes(iq)
       ) {
@@ -174,6 +192,7 @@ export default function LibraryPage() {
     titleQuery,
     sellerFilter,
     statusFilter,
+    resolutionFilter,
     sortKey,
   ]);
 
@@ -350,6 +369,24 @@ export default function LibraryPage() {
         <option value="product_desc">
           Product desc
         </option>
+
+        <option value="file_size_desc">
+          File size desc
+        </option>
+      </select>
+
+      <select
+        value={resolutionFilter}
+        onChange={(e) =>
+          setResolutionFilter(
+            e.target.value as ResolutionClass | "all"
+          )
+        }
+      >
+        <option value="all">ALL</option>
+        <option value="4K">4K</option>
+        <option value="HD">HD</option>
+        <option value="LOW">LOW</option>
       </select>
 
       {pager}
@@ -486,7 +523,33 @@ function sortItems(
     return byUpdated(a, b);
   }
 
+  if (sortKey === "file_size_desc") {
+    return byFileSize(b, a);
+  }
+
   return byUpdated(b, a);
+}
+
+function byFileSize(
+  a: LibraryItem,
+  b: LibraryItem
+): number {
+  return getFileSize(a) - getFileSize(b);
+}
+
+function getFileSize(item: LibraryItem): number {
+  const raw =
+    item.fileSize ??
+    item.file_size ??
+    item.localFileSize ??
+    0;
+
+  const size =
+    typeof raw === "number"
+      ? raw
+      : Number(String(raw).replace(/,/g, ""));
+
+  return Number.isFinite(size) ? size : 0;
 }
 
 function byUpdated(

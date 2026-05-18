@@ -711,6 +711,19 @@ SELECT count(*) FROM public.xxx_tm002_owned_files WHERE status = 'owned';
 
 - Seller Completionは `xxx_vq027_wiki_seller_summary_display` と `xxx_vq028_wiki_seller_missing_products` を参照し、FC2 Wiki由来の販売者名を表示軸にする。
 - Local Libraryは `xxx_vq029_owned_file_thumbnail_status` を参照し、所持ファイルに対するサムネイル有無を扱う。
+
+### Local Library 動画解像度メタ情報
+
+`xxx_tm002_owned_files` の所持 `.mp4` に対し、解像度フィルタ用のメタ情報を別テーブルで保持する。
+
+- テーブル: `public.xxx_tm011_owned_file_video_metadata`
+- 紐づけ: `owned_file_id` で `xxx_tm002_owned_files.id` に対応する。
+- 主な列: `video_width`, `video_height`, `resolution_class`, `probe_status`, `probe_error`, `probed_at`
+- `resolution_class`: `4K`, `HD`, `LOW`
+- 取得処理: `project_scripts/thumbnail_library_ui/scripts/collect_video_resolution.js`
+- AM5:30の `project_scripts/phase2_execute/phase2_file_pipeline2.js` は、matched `.mp4` を `xxx_tm002_owned_files` へ登録するタイミングで同じメタ情報を保存する。
+- 取得ツール: npm依存の `ffprobe-static`
+- 方針: OSグローバルの `ffprobe` には依存しない。
 - Rapidgator Researchは `xxx_vq030_rapidgator_wiki_display` を参照し、Rapidgator候補にFC2 Wiki基準の販売者名とサムネイル状態を付与する。
 - サムネイル実体は `fc2_sum` 配下に保存し、DBにはフルパスとファイル名を保持する。
 

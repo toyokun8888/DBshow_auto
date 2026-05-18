@@ -1,7 +1,9 @@
 const fs = require("fs");
 const fsp = fs.promises;
 const path = require("path");
+const { spawn } = require("child_process");
 const { Client } = require("pg");
+const ffprobe = require("ffprobe-static");
 
 const PROJECT_ROOT = path.resolve(__dirname, "..", "..");
 
@@ -53,6 +55,7 @@ const CONFIG = {
   dbOwnedTable: "public.xxx_tm002_owned_files",
   dbUnmatchedTable: "public.xxx_tm005_unmatched_files",
   dbLogTable: "public.xxx_tl001_file_process_logs",
+  dbVideoMetadataTable: "public.xxx_tm011_owned_file_video_metadata",
 
   // ============================================================
   // ★★★ metadata ★★★
@@ -62,6 +65,7 @@ const CONFIG = {
   unknownSellerFolder: "未名称",
   maxFileNameLength: 180,
   envPath: path.join(PROJECT_ROOT, ".env"),
+  ffprobeTimeoutMs: 30000,
 
   // mp4以外のリネーム接頭辞
   nonMp4Prefix: "inspection",
@@ -229,6 +233,7 @@ function parseArgs(argv) {
     else if (key === "--run-id") args.runId = consumeValue(key, next, argv, ++i);
     else if (key === "--confirm-execute") args.confirmExecute = consumeValue(key, next, argv, ++i);
     else if (key === "--limit") args.limit = Number.parseInt(consumeValue(key, next, argv, ++i), 10);
+    else if (key === "--ffprobe-timeout-ms") args.ffprobeTimeoutMs = Number.parseInt(consumeValue(key, next, argv, ++i), 10);
     else throw new Error(`Unknown argument: ${key}`);
   }
 
@@ -269,7 +274,16 @@ function buildConfig(args) {
     holdDir: args.holdDir || envValue("PHASE2_FILE_PIPELINE_HOLD_DIR") || CONFIG.holdDir,
     errorDir: args.errorDir || envValue("PHASE2_FILE_PIPELINE_ERROR_DIR") || CONFIG.errorDir,
     inspectionDir: args.inspectionDir || envValue("PHASE2_FILE_PIPELINE_INSPECTION_DIR") || CONFIG.inspectionDir,
+    ffprobeTimeoutMs:
+      parsePositiveInt(args.ffprobeTimeoutMs) ||
+      parsePositiveInt(envValue("PHASE2_FILE_PIPELINE_FFPROBE_TIMEOUT_MS")) ||
+      CONFIG.ffprobeTimeoutMs,
   };
+}
+
+function parsePositiveInt(value) {
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
 }
 
 function buildExcludeDirs(config) {
@@ -415,6 +429,7 @@ async function finalizeRow(
     moved = true;
 
     const targetStat = await fsp.stat(targetPath);
+    const videoMetadata = await inspectVideoMetadata(targetPath, config.ffprobeTimeoutMs);
 
     if (dbClient) {
       try {
@@ -431,6 +446,16 @@ async function finalizeRow(
             matchedBy: config.matchedByLabel,
             fileSize: targetStat.size,
             fileModifiedAt: targetStat.mtime,
+          });
+
+          await upsertVideoMetadata(dbClient, config, {
+            ownedFileId,
+            productId: extraction.primaryProductId,
+            currentPath: targetPath,
+            currentFileName: path.basename(targetPath),
+            fileSize: targetStat.size,
+            fileModifiedAt: targetStat.mtime,
+            videoMetadata,
           });
         } else {
           await insertUnmatched(dbClient, config, {
@@ -753,11 +778,51 @@ async function connectDb(config) {
   assertSafeQualifiedName(config.dbOwnedTable, "owned table");
   assertSafeQualifiedName(config.dbUnmatchedTable, "unmatched table");
   assertSafeQualifiedName(config.dbLogTable, "log table");
+  assertSafeQualifiedName(config.dbVideoMetadataTable, "video metadata table");
 
   const client = createPgClient();
   await client.connect();
+  await ensureVideoMetadataTable(client, config);
 
   return client;
+}
+
+async function ensureVideoMetadataTable(client, config) {
+  await client.query(`
+    CREATE TABLE IF NOT EXISTS ${config.dbVideoMetadataTable} (
+      owned_file_id bigint PRIMARY KEY,
+      product_id text NOT NULL,
+      current_path text NOT NULL,
+      current_file_name text,
+      file_size bigint,
+      file_modified_at timestamptz,
+      video_width integer,
+      video_height integer,
+      resolution_class text,
+      probe_status text NOT NULL,
+      probe_error text,
+      probed_at timestamptz NOT NULL DEFAULT now(),
+      created_at timestamptz NOT NULL DEFAULT now(),
+      updated_at timestamptz NOT NULL DEFAULT now(),
+      CONSTRAINT xxx_chk_tm011_resolution_class
+        CHECK (resolution_class IS NULL OR resolution_class IN ('4K', 'HD', 'LOW')),
+      CONSTRAINT xxx_chk_tm011_probe_status
+        CHECK (probe_status IN ('ok', 'failed', 'file_missing', 'path_not_allowed'))
+    )
+  `);
+
+  await client.query(`
+    CREATE INDEX IF NOT EXISTS xxx_idx_tm011_video_metadata_product_id
+      ON ${config.dbVideoMetadataTable} (product_id)
+  `);
+  await client.query(`
+    CREATE INDEX IF NOT EXISTS xxx_idx_tm011_video_metadata_resolution_class
+      ON ${config.dbVideoMetadataTable} (resolution_class)
+  `);
+  await client.query(`
+    CREATE INDEX IF NOT EXISTS xxx_idx_tm011_video_metadata_probe_status
+      ON ${config.dbVideoMetadataTable} (probe_status)
+  `);
 }
 
 async function insertOwned(client, config, row) {
@@ -778,6 +843,152 @@ async function insertOwned(client, config, row) {
   );
 
   return result.rows[0]?.id || null;
+}
+
+async function upsertVideoMetadata(client, config, row) {
+  if (!row.ownedFileId) return;
+
+  await client.query(
+    `INSERT INTO ${config.dbVideoMetadataTable}
+      (owned_file_id, product_id, current_path, current_file_name, file_size, file_modified_at,
+       video_width, video_height, resolution_class, probe_status, probe_error, probed_at, created_at, updated_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,NOW(),NOW(),NOW())
+     ON CONFLICT (owned_file_id) DO UPDATE SET
+       product_id = EXCLUDED.product_id,
+       current_path = EXCLUDED.current_path,
+       current_file_name = EXCLUDED.current_file_name,
+       file_size = EXCLUDED.file_size,
+       file_modified_at = EXCLUDED.file_modified_at,
+       video_width = EXCLUDED.video_width,
+       video_height = EXCLUDED.video_height,
+       resolution_class = EXCLUDED.resolution_class,
+       probe_status = EXCLUDED.probe_status,
+       probe_error = EXCLUDED.probe_error,
+       probed_at = NOW(),
+       updated_at = NOW()`,
+    [
+      row.ownedFileId,
+      row.productId,
+      row.currentPath,
+      row.currentFileName,
+      row.fileSize,
+      row.fileModifiedAt,
+      row.videoMetadata.videoWidth || null,
+      row.videoMetadata.videoHeight || null,
+      row.videoMetadata.resolutionClass || null,
+      row.videoMetadata.probeStatus,
+      row.videoMetadata.probeError || null,
+    ]
+  );
+}
+
+async function inspectVideoMetadata(filePath, timeoutMs) {
+  if (!fs.existsSync(filePath)) {
+    return {
+      probeStatus: "file_missing",
+      probeError: "file_missing",
+    };
+  }
+
+  try {
+    const metadata = await runFfprobe(filePath, timeoutMs);
+    const videoStream = (metadata.streams || []).find((stream) => stream.codec_type === "video");
+    const width = Number(videoStream?.width || 0);
+    const height = Number(videoStream?.height || 0);
+
+    if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
+      return {
+        probeStatus: "failed",
+        probeError: "video_dimensions_not_found",
+      };
+    }
+
+    return {
+      probeStatus: "ok",
+      videoWidth: width,
+      videoHeight: height,
+      resolutionClass: classifyResolution(width, height),
+    };
+  } catch (error) {
+    return {
+      probeStatus: "failed",
+      probeError: String(error?.message || error).slice(0, 1000),
+    };
+  }
+}
+
+function runFfprobe(filePath, timeoutMs) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(
+      ffprobe.path,
+      [
+        "-v",
+        "error",
+        "-select_streams",
+        "v:0",
+        "-show_entries",
+        "stream=codec_type,width,height",
+        "-of",
+        "json",
+        filePath,
+      ],
+      { windowsHide: true }
+    );
+
+    let stdout = "";
+    let stderr = "";
+    let settled = false;
+    let timer;
+
+    const finishReject = (error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      reject(error);
+    };
+
+    const finishResolve = (value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(value);
+    };
+
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk.toString("utf8");
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk.toString("utf8");
+    });
+    child.once("error", finishReject);
+
+    timer = setTimeout(() => {
+      child.kill("SIGKILL");
+      finishReject(new Error(`ffprobe_timeout_${timeoutMs}ms`));
+    }, timeoutMs);
+
+    child.once("close", (code) => {
+      if (code !== 0) {
+        finishReject(new Error(stderr.trim() || `ffprobe_exit_${code}`));
+        return;
+      }
+
+      try {
+        finishResolve(JSON.parse(stdout || "{}"));
+      } catch (error) {
+        finishReject(error);
+      }
+    });
+  });
+}
+
+function classifyResolution(width, height) {
+  const maxSide = Math.max(width, height);
+  const minSide = Math.min(width, height);
+
+  if (maxSide >= 3840 || minSide >= 2160) return "4K";
+  if (maxSide >= 1280 || minSide >= 720) return "HD";
+  return "LOW";
 }
 
 async function insertUnmatched(client, config, row) {
@@ -1161,11 +1372,13 @@ function writeUsage() {
       "  --inspection-dir <folder>   Destination folder for non-mp4 files.",
       "  --log-dir <folder>          CSV log output folder.",
       "  --limit <number>            Limit mp4 processing count. Non-mp4 files are still scanned.",
+      "  --ffprobe-timeout-ms <ms>   Timeout for ffprobe-static resolution probing.",
       "",
       "Notes:",
       "  - CLI args override PHASE2_FILE_PIPELINE_* values in .env.",
       "  - dry-run writes CSV only. It does not move files and does not write DB rows.",
       "  - execute mode moves files and writes DB rows for mp4 only.",
+      "  - matched mp4 rows also write resolution metadata with ffprobe-static.",
       "  - non-mp4 files are moved to inspection folder only. DB is not written.",
       "  - empty directories under input folder are removed after execute.",
       "  - cross-device move (EXDEV) is blocked for safety in this version.",

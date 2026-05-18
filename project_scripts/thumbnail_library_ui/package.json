@@ -9,9 +9,11 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "serve:prod": "vite preview --host 127.0.0.1 --port 80 --strictPort",
+    "collect:video-resolution": "node ./scripts/collect_video_resolution.js",
     "verify:runtime": "powershell -ExecutionPolicy Bypass -File ./scripts/runtime_verify.ps1"
   },
   "dependencies": {
+    "ffprobe-static": "^3.1.0",
     "react": "^19.2.5",
     "react-dom": "^19.2.5"
   },

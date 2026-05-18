@@ -1547,6 +1547,15 @@ CSVログファイル名:
 - 主な列: `id`, `product_id`, `current_path`, `current_file_name`, `original_path`, `original_file_name`, `file_ext`, `part_label`, `duplicate_label`, `duplicate_group_key`, `is_duplicate_candidate`, `pathid`, `status`, `source`, `matched_by`, `file_size`, `file_modified_at`, `last_checked_at`, `note`, `created_at`, `updated_at`
 - UI用途: Local Library の一覧と open file/open folder の基準データ。
 
+#### `xxx_tm011_owned_file_video_metadata`
+
+- 役割: `xxx_tm002_owned_files` の所持 `.mp4` に対する動画解像度メタ情報を保持する。
+- 主な列: `owned_file_id`, `product_id`, `current_path`, `current_file_name`, `file_size`, `file_modified_at`, `video_width`, `video_height`, `resolution_class`, `probe_status`, `probe_error`, `probed_at`, `created_at`, `updated_at`
+- `resolution_class` は `4K`, `HD`, `LOW` のいずれか。取得失敗・ファイル欠損・許可外パスではNULLにする。
+- 取得は `project_scripts/thumbnail_library_ui/scripts/collect_video_resolution.js` で行い、`ffprobe-static` を使う。
+- AM5:30の `project_scripts/phase2_execute/phase2_file_pipeline2.js` でも、matched `.mp4` のDB登録時に同じテーブルへ保存する。
+- UI用途: Local Library の解像度フィルタ。
+
 #### `xxx_tm005_unmatched_files`
 
 - 役割: 未照合または手動確認が必要なファイルの受け皿。

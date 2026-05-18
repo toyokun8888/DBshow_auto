@@ -21,6 +21,10 @@ type LibraryRow = {
   thumbnail_path: string;
   collect_status: string;
   updated_at: string | null;
+  file_size: number | string | null;
+  video_width: number | string | null;
+  video_height: number | string | null;
+  resolution_class: string | null;
 };
 
 type ThumbnailPathRow = {
@@ -164,7 +168,11 @@ async function queryLibraryRows(): Promise<LibraryRow[]> {
           ELSE ''
         END AS thumbnail_path,
         COALESCE(wt.collect_status, 'unknown') AS collect_status,
-        o.updated_at
+        o.updated_at,
+        o.file_size,
+        vm.video_width,
+        vm.video_height,
+        vm.resolution_class
       FROM public.xxx_tm002_owned_files o
       LEFT JOIN public.xxx_vq001_moviemaster_unique m
         ON m.product_id = o.product_id::text
@@ -172,6 +180,9 @@ async function queryLibraryRows(): Promise<LibraryRow[]> {
         ON sg.seller_id::text = m.seller_id::text
       LEFT JOIN public.xxx_vq029_owned_file_thumbnail_status wt
         ON wt.owned_file_id = o.id
+      LEFT JOIN public.xxx_tm011_owned_file_video_metadata vm
+        ON vm.owned_file_id = o.id
+        AND vm.probe_status = 'ok'
       WHERE o.status = 'owned'
       ORDER BY o.updated_at DESC NULLS LAST, o.id DESC
     `;
@@ -186,7 +197,11 @@ async function queryLibraryRows(): Promise<LibraryRow[]> {
         o.current_file_name,
         '' AS thumbnail_path,
         'unknown' AS collect_status,
-        o.updated_at
+        o.updated_at,
+        o.file_size,
+        NULL::integer AS video_width,
+        NULL::integer AS video_height,
+        NULL::text AS resolution_class
       FROM public.xxx_tm002_owned_files o
       LEFT JOIN public.xxx_vq001_moviemaster_unique m
         ON m.product_id = o.product_id::text
@@ -639,6 +654,10 @@ function attachLibraryApi(server: any) {
               thumbnailPath: r.thumbnail_path,
               collectStatus: r.collect_status,
               updatedAt: r.updated_at,
+              fileSize: r.file_size,
+              videoWidth: r.video_width,
+              videoHeight: r.video_height,
+              resolutionClass: r.resolution_class,
             }));
             res.setHeader("Content-Type", "application/json; charset=utf-8");
             res.end(JSON.stringify({ items }));
