@@ -21,13 +21,13 @@
 //   node phase2_file_pipeline2.js
 //
 // PM2 start:
-//   pm2 start ecosystem.config2.js
+//   pm2 start ecosystem.config2.config.js
 // ============================================================
 
 module.exports = {
   apps: [
     {
-      name: "daily-0500-phase2-file-pipeline",
+      name: "daily-0530-phase2-file-pipeline",
 
       script:
         "C:/Users/toyoaki/Desktop/filedatachange/project_scripts/pm2_scheduled_runner.js",
@@ -41,7 +41,7 @@ module.exports = {
         SCHEDULE_TARGET_CWD:
           "C:/Users/toyoaki/Desktop/filedatachange/project_scripts/phase2_execute",
         SCHEDULE_HOUR: "5",
-        SCHEDULE_MINUTE: "0",
+        SCHEDULE_MINUTE: "30",
         SCHEDULE_WINDOW_MINUTES: "10",
       },
 
@@ -51,8 +51,8 @@ module.exports = {
       autorestart: false,
       watch: false,
 
-      // Daily 05:00 local time.
-      cron_restart: "0 5 * * *",
+      // Daily 05:30 local time.
+      cron_restart: "30 5 * * *",
 
       out_file:
         "C:/Users/toyoaki/.pm2/logs/phase2-file-pipeline-out.log",

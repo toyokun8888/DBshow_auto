@@ -1578,6 +1578,23 @@ CSVログファイル名:
 - 保存先の実体ファイルは原則 `fc2_sum` 配下に置く。
 - 旧計画の `xxx_tm006_thumbnail_assets` は採番衝突のため使わず、現行UIは `xxx_tm009_fc2_wiki_thumbnail_assets` と `xxx_vq029_owned_file_thumbnail_status` を参照する。
 
+### `xxx_tm010_fc2_delta_thumbnail_targets`
+
+- 役割: FC2記事最新取得から、サムネイル取得対象だけを一時退避するテーブル。
+- 起点: `fc2_article_collector_operational.js` の最新取得バッチ。
+- 対象条件: `xxx_tm006_fc2_article_master_full_stage.seller_name` が、`xxx_tm007_fc2_wiki_sellers.seller_name` のアクティブ販売者に一致し、既に `xxx_tm009_fc2_wiki_thumbnail_assets.thumbnail_status = 'collected'` ではない作品。
+- 主な列: `product_id`, `source_run_id`, `source_collected_at`, `article_url`, `search_page_url`, `page_number`, `row_index_in_page`, `article_seller_id`, `article_seller_name`, `wiki_seller_id`, `wiki_seller_name`, `target_status`, `created_at`, `updated_at`
+- 運用: 午前3時のマスター取得で投入し、午後9時の差分サムネイル取得後に `DELETE` で空にする。`TRUNCATE` は使わない。
+- 注意: このテーブルは対象の一時退避用であり、処理履歴は `xxx_tl005_fc2_delta_thumbnail_target_logs` と既存サムネイルログに残す。
+
+### `xxx_tl005_fc2_delta_thumbnail_target_logs`
+
+- 役割: `xxx_tm010_fc2_delta_thumbnail_targets` への投入と、差分サムネイル取得結果の履歴ログ。
+- 主な列: `id`, `run_id`, `product_id`, `article_seller_id`, `article_seller_name`, `wiki_seller_id`, `wiki_seller_name`, `action`, `result_status`, `detail`, `recorded_at`
+- 用途: 「この日の対象に入った理由」「サムネイルが取得できたか」「まだサムネイル元に反映されていなかったか」を後から追跡する。
+- `result_status = 'not_found_yet'` は、`product_id` は対象だが `xxx_tm008_fc2_wiki_articles` 側にサムネイルURLがまだ見つからない状態を表す。
+- `fc2_article_delta_thumbnail_collector_operational.js` は、DB側に未反映の対象について `xxx_tm007_fc2_wiki_sellers.wiki_url` を確認し、同じ `product_id` の周辺HTMLからサムネイルURLを探す。FC2記事ページへの直アクセスはサムネイル用途では使わない。
+
 ### `xxx_vq026_wiki_article_master_enriched`
 
 - 役割: `xxx_tm008_fc2_wiki_articles` と `xxx_vq001_moviemaster_unique` を結合し、masterに存在確認できたFC2 Wiki記事を扱うビュー。

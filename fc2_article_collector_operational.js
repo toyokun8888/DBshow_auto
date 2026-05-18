@@ -89,12 +89,17 @@ const TABLE_MASTER = "master";
 const TABLE_FULL = "xxx_tm006_fc2_article_master_full";
 const TABLE_FULL_STAGE = "xxx_tm006_fc2_article_master_full_stage";
 const TABLE_IMPORT_STAGE = "xxx_tm006_fc2_article_master_import_stage";
+const TABLE_DELTA_THUMBNAIL_TARGETS = "xxx_tm010_fc2_delta_thumbnail_targets";
+const TABLE_DELTA_THUMBNAIL_TARGET_LOGS = "xxx_tl005_fc2_delta_thumbnail_target_logs";
+const TABLE_WIKI_SELLERS = "xxx_tm007_fc2_wiki_sellers";
+const TABLE_THUMBNAIL_ASSETS = "xxx_tm009_fc2_wiki_thumbnail_assets";
 
 // ============================================================
 // CSV
 // ============================================================
 
 const TS = new Date().toISOString().replace(/[-:T]/g, "").slice(0, 15);
+const RUN_ID = `fc2_article_collect_${TS}_${process.pid}`;
 
 const MASTER_CSV = path.join(OUTPUT_DIR, `fc2_article_master_import_${TS}.csv`);
 const FULL_CSV = path.join(OUTPUT_DIR, `fc2_article_master_full_${TS}.csv`);
@@ -528,6 +533,166 @@ async function commitStageToMain(client) {
   }
 }
 
+async function ensureDeltaThumbnailTargetTables(client) {
+  await client.query(`
+    CREATE TABLE IF NOT EXISTS public.${TABLE_DELTA_THUMBNAIL_TARGETS} (
+      product_id text PRIMARY KEY,
+      source_run_id text NOT NULL,
+      source_collected_at timestamptz,
+      article_url text,
+      search_page_url text,
+      page_number integer,
+      row_index_in_page integer,
+      article_seller_id text,
+      article_seller_name text,
+      wiki_seller_id bigint,
+      wiki_seller_name text,
+      target_status text NOT NULL DEFAULT 'pending',
+      created_at timestamptz NOT NULL DEFAULT now(),
+      updated_at timestamptz NOT NULL DEFAULT now()
+    );
+  `);
+
+  await client.query(`
+    CREATE TABLE IF NOT EXISTS public.${TABLE_DELTA_THUMBNAIL_TARGET_LOGS} (
+      id bigserial PRIMARY KEY,
+      run_id text NOT NULL,
+      product_id text NOT NULL,
+      article_seller_id text,
+      article_seller_name text,
+      wiki_seller_id bigint,
+      wiki_seller_name text,
+      action text NOT NULL,
+      result_status text NOT NULL,
+      detail text,
+      recorded_at timestamptz NOT NULL DEFAULT now()
+    );
+  `);
+
+  await client.query(`
+    CREATE INDEX IF NOT EXISTS xxx_idx_tm010_fc2_delta_thumbnail_targets_status
+      ON public.${TABLE_DELTA_THUMBNAIL_TARGETS} (target_status);
+  `);
+
+  await client.query(`
+    CREATE INDEX IF NOT EXISTS xxx_idx_tl005_fc2_delta_thumbnail_target_logs_run
+      ON public.${TABLE_DELTA_THUMBNAIL_TARGET_LOGS} (run_id, product_id);
+  `);
+}
+
+async function resetDeltaThumbnailTargets(client) {
+  const result = await client.query(`DELETE FROM public.${TABLE_DELTA_THUMBNAIL_TARGETS};`);
+  console.log(`  delta thumbnail target初期化: ${result.rowCount}件削除`);
+}
+
+async function enqueueDeltaThumbnailTargetsFromStage(client, sourceRunId) {
+  const insertTargets = await client.query(
+    `
+      INSERT INTO public.${TABLE_DELTA_THUMBNAIL_TARGETS} (
+        product_id,
+        source_run_id,
+        source_collected_at,
+        article_url,
+        search_page_url,
+        page_number,
+        row_index_in_page,
+        article_seller_id,
+        article_seller_name,
+        wiki_seller_id,
+        wiki_seller_name,
+        target_status,
+        updated_at
+      )
+      SELECT DISTINCT ON (s.product_id)
+        s.product_id,
+        $1,
+        s.collected_at,
+        s.article_url,
+        s.search_page_url,
+        s.page_number,
+        s.row_index_in_page,
+        s.seller_id,
+        s.seller_name,
+        ws.id,
+        ws.seller_name,
+        'pending',
+        now()
+      FROM ${TABLE_FULL_STAGE} s
+      JOIN public.${TABLE_WIKI_SELLERS} ws
+        ON ws.seller_name = s.seller_name
+       AND ws.is_active = true
+       AND ws.is_archived = false
+      LEFT JOIN public.${TABLE_THUMBNAIL_ASSETS} ta
+        ON ta.product_id = s.product_id
+       AND ta.thumbnail_status = 'collected'
+      WHERE ta.product_id IS NULL
+      ORDER BY
+        s.product_id,
+        s.page_number ASC NULLS LAST,
+        s.row_index_in_page ASC NULLS LAST,
+        s.collected_at DESC
+      ON CONFLICT (product_id) DO UPDATE SET
+        source_run_id = EXCLUDED.source_run_id,
+        source_collected_at = EXCLUDED.source_collected_at,
+        article_url = EXCLUDED.article_url,
+        search_page_url = EXCLUDED.search_page_url,
+        page_number = EXCLUDED.page_number,
+        row_index_in_page = EXCLUDED.row_index_in_page,
+        article_seller_id = EXCLUDED.article_seller_id,
+        article_seller_name = EXCLUDED.article_seller_name,
+        wiki_seller_id = EXCLUDED.wiki_seller_id,
+        wiki_seller_name = EXCLUDED.wiki_seller_name,
+        target_status = 'pending',
+        updated_at = now()
+    `,
+    [sourceRunId]
+  );
+
+  const insertLogs = await client.query(
+    `
+      INSERT INTO public.${TABLE_DELTA_THUMBNAIL_TARGET_LOGS} (
+        run_id,
+        product_id,
+        article_seller_id,
+        article_seller_name,
+        wiki_seller_id,
+        wiki_seller_name,
+        action,
+        result_status,
+        detail
+      )
+      SELECT DISTINCT ON (s.product_id)
+        $1,
+        s.product_id,
+        s.seller_id,
+        s.seller_name,
+        ws.id,
+        ws.seller_name,
+        'enqueue',
+        'pending',
+        'matched_active_wiki_seller'
+      FROM ${TABLE_FULL_STAGE} s
+      JOIN public.${TABLE_WIKI_SELLERS} ws
+        ON ws.seller_name = s.seller_name
+       AND ws.is_active = true
+       AND ws.is_archived = false
+      LEFT JOIN public.${TABLE_THUMBNAIL_ASSETS} ta
+        ON ta.product_id = s.product_id
+       AND ta.thumbnail_status = 'collected'
+      WHERE ta.product_id IS NULL
+      ORDER BY
+        s.product_id,
+        s.page_number ASC NULLS LAST,
+        s.row_index_in_page ASC NULLS LAST,
+        s.collected_at DESC
+    `,
+    [sourceRunId]
+  );
+
+  console.log(`  delta thumbnail target追加/更新: ${insertTargets.rowCount}件`);
+  console.log(`  delta thumbnail targetログ追加: ${insertLogs.rowCount}件`);
+}
+
 // ============================================================
 // Batch処理
 // ============================================================
@@ -554,6 +719,10 @@ async function flushBatch(client, batchNo, startPage, endPage, fullRows, importR
   console.log("投入前確認:", before);
 
   const mode = await commitStageToMain(client);
+
+  if (mode === "COMMIT") {
+    await enqueueDeltaThumbnailTargetsFromStage(client, RUN_ID);
+  }
 
   const after = await getCounts(client);
 
@@ -595,11 +764,16 @@ async function flushBatch(client, batchNo, startPage, endPage, fullRows, importR
   console.log(`BACKFILL_BASELINE_PRODUCT_ID: ${BACKFILL_BASELINE_PRODUCT_ID}`);
   console.log(`BATCH_PAGES                : ${BATCH_PAGES}`);
   console.log(`DRY_RUN                    : ${DRY_RUN}`);
+  console.log(`RUN_ID                     : ${RUN_ID}`);
   console.log(`OUTPUT_DIR                 : ${OUTPUT_DIR}`);
   console.log("=".repeat(70));
 
   const client = new Client(DB_CONFIG);
   await client.connect();
+  await ensureDeltaThumbnailTargetTables(client);
+  if (!DRY_RUN) {
+    await resetDeltaThumbnailTargets(client);
+  }
 
   const browser = await puppeteer.launch({
     headless: HEADLESS

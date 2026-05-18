@@ -62,19 +62,19 @@ puppeteer.use(StealthPlugin());
 const BASE_URL = "https://rapidgator.net";
 
 // 対象フォルダID
-//const FOLDER_ID = "3330879";//movie
-const FOLDER_ID = "5535466";//javdaily2
+const FOLDER_ID = "3330879";//movie
+//const FOLDER_ID = "5535466";//javdaily2
 
 // 対象フォルダ名
-//const FOLDER_NAME = "movie";
-const FOLDER_NAME = "JAVDAILY";
+const FOLDER_NAME = "movie";
+//const FOLDER_NAME = "JAVDAILY";
 // 取得開始ページ
-const START_PAGE = 207;
+const START_PAGE = 6264;
 
 // 取得終了ページ
-//const END_PAGE = 6264;// 2026-5-14 時点の最大ページ数
+const END_PAGE = 6272;// 2026-5-17 時点の最大ページ数
 //const END_PAGE = 1089;// 2026-5-14 時点の最大ページ数
-const END_PAGE = 2056// 2026-5-14 時点の最大ページ数
+//const END_PAGE = 2056// 2026-5-14 時点の最大ページ数
 // 途中再開ページ
 // 通常は null
 // 例: 350 から再開したい場合 → const RESUME_PAGE = 350;
@@ -89,7 +89,7 @@ const TEST_MODE = false;
 const TEST_MAX_RECORDS = 300;
 
 // CSV出力先ディレクトリ
-const OUTPUT_DIR = "C:\\rapidgator_output\\run_JAVDaily2";
+const OUTPUT_DIR = "C:\\rapidgator_output\\run_movie6272";
 
 // master CSV の1ファイルあたり最大行数
 const MAX_ROWS_PER_CSV = 50000;

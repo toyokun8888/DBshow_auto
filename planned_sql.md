@@ -720,3 +720,43 @@ SELECT count(*) FROM public.xxx_tm002_owned_files WHERE status = 'owned';
 - 既定では1回100件まで、2.5秒から5.5秒のランダム間隔を置く。
 - 成功は `thumbnail_status = 'collected'`、失敗は `thumbnail_status = 'failed'`、URL欠損・不許可は `thumbnail_status = 'missing_url'` として `xxx_tm009_fc2_wiki_thumbnail_assets` に記録する。
 - 実行単位は `xxx_tl003_fc2_wiki_thumbnail_runs.run_id` で記録し、対象ごとの結果は `xxx_tl004_fc2_wiki_thumbnail_run_items` に記録する。
+
+## 2026-05-17 設計更新: FC2記事差分サムネイルの対象退避方式
+
+目的:
+
+- `fc2_article_collector_operational.js` が取得した最新記事データを、サムネイル収集対象の起点にする。
+- サムネイル取得元の `xxx_tm008_fc2_wiki_articles` 側に存在する `product_id` から逆算して対象を決めない。
+- マスター更新とサムネイル取得元ページの更新タイミング差を吸収するため、午前3時のマスター取得後、午後9時にサムネイル取得を行う。
+- 午後9時開始により、前回マスター取得から約18時間待ち、次回午前3時のマスター取得まで約6時間の処理余白を持つ。
+
+追加オブジェクト:
+
+- `xxx_tm010_fc2_delta_thumbnail_targets`
+  - 役割: 当日サムネイル取得対象の一時退避テーブル。
+  - 起点: `xxx_tm006_fc2_article_master_full_stage` のうち、`xxx_tm007_fc2_wiki_sellers` のアクティブな販売者名に一致し、既に `xxx_tm009_fc2_wiki_thumbnail_assets.thumbnail_status = 'collected'` ではない作品。
+  - 全件処理後は `DELETE` で空にする。`TRUNCATE` は使わない。
+- `xxx_tl005_fc2_delta_thumbnail_target_logs`
+  - 役割: 一時退避テーブルへの投入、サムネイル取得結果、未検出などの履歴を残すログ。
+
+処理方針:
+
+- `fc2_article_collector_operational.js`
+  - 実行開始時に `xxx_tm010_fc2_delta_thumbnail_targets` を `DELETE` で空にする。
+  - 各バッチCOMMIT後、対象販売者に一致した作品を `xxx_tm010_fc2_delta_thumbnail_targets` へ入れる。
+  - 同時に `xxx_tl005_fc2_delta_thumbnail_target_logs` へ `enqueue` ログを残す。
+- `fc2_article_delta_thumbnail_collector_operational.js`
+  - `xxx_tm010_fc2_delta_thumbnail_targets` の `pending` レコードだけを読む。
+  - まず `product_id` で `xxx_tm008_fc2_wiki_articles.thumbnail_url` を照合する。
+  - DB側に未反映の場合は、対象販売者の `xxx_tm007_fc2_wiki_sellers.wiki_url` だけを取得し、同じ `product_id` の周辺HTMLからサムネイルURLを探す。
+  - `adult.contents.fc2.com/article/{product_id}/` へサムネイル目的ではアクセスしない。
+  - 取得できたものは `xxx_tm009_fc2_wiki_thumbnail_assets` と `xxx_tl004_fc2_wiki_thumbnail_run_items` に記録する。
+  - サムネイルURLがまだ見つからない場合は `not_found_yet` として記録する。
+  - 全件処理後、`xxx_tm010_fc2_delta_thumbnail_targets` を `DELETE` で空にする。
+
+スケジュール:
+
+- `daily-0300-fc2-article-collect`: 午前3時にマスター最新取得と対象退避。
+- `daily-0330-seller-cache-refresh`: 午前3時30分にUI用販売者キャッシュを更新し、最新マスター取得分を画面へ反映する。
+- `daily-2100-fc2-delta-thumbnail`: 午後9時に退避済み対象のサムネイル取得。
+- `daily-2200-seller-cache-refresh`: 午後10時にUI用販売者キャッシュを更新し、取得済みサムネイル状態を画面へ反映する。

@@ -3,17 +3,17 @@
 // Collect thumbnails only for the latest FC2 article daily delta.
 //
 // Purpose:
-// - Read newly inserted article rows from xxx_tm006_fc2_article_master_full
-// - Re-open only the search pages where those rows were found
-// - Download thumbnails for those product IDs only
+// - Read product IDs staged by fc2_article_collector_operational.js
+// - Resolve thumbnail URLs from the FC2 Wiki article pool by product_id
+// - Download thumbnails for those staged product IDs only
 // - Save files and DB status using the same tables as fc2_wiki_thumbnail_collector_operational.js
 //
 // Safety:
-// - Differential target only, not whole master
+// - Differential target queue only, not whole master
 // - Random delay before network requests
 // - Only contents-thumbnail2.fc2.com HTTPS URLs are accepted
 // - Existing thumbnail files are not overwritten
-// - No DELETE, DROP, TRUNCATE, or file cleanup
+// - No DROP, TRUNCATE, or file cleanup
 // ============================================================
 
 const fs = require("fs");
@@ -52,6 +52,8 @@ const MAX_ATTEMPTS = Math.min(
 const MAX_BYTES = 10 * 1024 * 1024;
 const TARGET_SCOPE = "article_delta";
 const RUN_ID = `fc2_article_delta_thumb_${new Date().toISOString().replace(/[-:T.]/g, "").slice(0, 14)}_${process.pid}`;
+const TABLE_DELTA_THUMBNAIL_TARGETS = "xxx_tm010_fc2_delta_thumbnail_targets";
+const TABLE_DELTA_THUMBNAIL_TARGET_LOGS = "xxx_tl005_fc2_delta_thumbnail_target_logs";
 
 const DB_CONFIG = {
   host: requireEnv("PGHOST"),
@@ -111,7 +113,7 @@ function toAbsoluteUrl(href) {
 }
 
 function extractProductIdFromArticleHref(href) {
-  const match = String(href || "").match(/\/article\/(\d+)\/?/);
+  const match = String(href || "").match(/(?:\/article\/|[?&]aid=|fc2-?ppv-)(\d{6,8})/i);
   return match ? match[1] : "";
 }
 
@@ -275,15 +277,17 @@ function downloadFile(url, outputPath) {
 }
 
 async function fetchSearchPageHtml(url, label) {
+  let lastError = null;
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     try {
       return await fetchText(url);
     } catch (error) {
+      lastError = error;
       console.log(`${label} page failed ${attempt}/${MAX_ATTEMPTS}: ${formatError(error)}`);
-      if (attempt < MAX_ATTEMPTS) await sleep(3000);
+      if (attempt < MAX_ATTEMPTS) await sleep(3000 * attempt);
     }
   }
-  return "";
+  throw new Error(`Page fetch failed after ${MAX_ATTEMPTS} attempts: ${formatError(lastError)}`);
 }
 
 function extractFirstThumbnailUrlFromHtml(html) {
@@ -305,14 +309,21 @@ async function scrapeThumbnailsFromSearchPage(searchPageUrl, wantedProductIds) {
 
   const rows = [];
   for (const productId of wantedProductIds) {
-    const articlePattern = new RegExp(`/article/${productId}(?:/|\\\\?)`);
-    const match = articlePattern.exec(html);
-    if (!match) continue;
+    const articlePattern = new RegExp(`(?:/article/${productId}(?:/|\\\\?)|[?&]aid=${productId}(?:&|["'<>\\\\s])|fc2-?ppv-${productId}(?:[^0-9]|$))`, "gi");
+    let match = null;
+    let foundMatch = false;
+    let thumbnailUrl = "";
 
-    const start = Math.max(0, match.index - 5000);
-    const end = Math.min(html.length, match.index + 5000);
-    const windowHtml = html.slice(start, end);
-    const thumbnailUrl = extractFirstThumbnailUrlFromHtml(windowHtml);
+    while ((match = articlePattern.exec(html)) !== null) {
+      foundMatch = true;
+      const start = Math.max(0, match.index - 5000);
+      const end = Math.min(html.length, match.index + 5000);
+      const windowHtml = html.slice(start, end);
+      thumbnailUrl = extractFirstThumbnailUrlFromHtml(windowHtml);
+      if (thumbnailUrl) break;
+    }
+
+    if (!foundMatch) continue;
 
     if (!thumbnailUrl) {
       rows.push({
@@ -331,32 +342,59 @@ async function scrapeThumbnailsFromSearchPage(searchPageUrl, wantedProductIds) {
   return rows;
 }
 
-async function scrapeThumbnailFromArticlePage(articleUrl, productId) {
-  const url = firstNonEmpty(articleUrl, `${BASE_URL}/article/${productId}/`);
-  const html = await fetchSearchPageHtml(url, url);
-  if (!html) return "";
-  return extractFirstThumbnailUrlFromHtml(html);
-}
-
 async function collectDeltaCandidates(client) {
   const result = await client.query(
     `
-      SELECT DISTINCT ON (f.product_id)
-        f.product_id,
-        f.article_url,
-        f.search_page_url,
-        f.page_number,
+      SELECT
+        q.product_id,
+        q.source_run_id,
+        q.source_collected_at,
+        q.article_url,
+        q.search_page_url,
+        q.page_number,
+        q.row_index_in_page,
+        q.article_seller_id,
+        q.article_seller_name,
+        q.wiki_seller_id,
+        q.wiki_seller_name,
+        COALESCE(w.thumbnail_url, '') AS thumbnail_url,
+        COALESCE(w.source_wiki_url, ws.wiki_url, '') AS source_wiki_url,
+        COALESCE(ws.wiki_url, '') AS wiki_seller_url,
+        CASE
+          WHEN COALESCE(w.thumbnail_url, '') = '' THEN 'not_found_yet'
+          ELSE 'found'
+        END AS thumbnail_lookup_status,
         COALESCE(t.thumbnail_status, '') AS thumbnail_status,
         COALESCE(t.attempt_count, 0) AS attempt_count
-      FROM public.xxx_tm006_fc2_article_master_full f
+      FROM public.${TABLE_DELTA_THUMBNAIL_TARGETS} q
+      LEFT JOIN public.xxx_tm007_fc2_wiki_sellers ws
+        ON ws.id = q.wiki_seller_id
       LEFT JOIN public.xxx_tm009_fc2_wiki_thumbnail_assets t
-        ON t.product_id = f.product_id
-      WHERE f.collected_at >= now() - ($1::int * INTERVAL '1 hour')
-        AND COALESCE(t.thumbnail_status, '') NOT IN ('collected', 'failed', 'missing_url')
-      ORDER BY f.product_id, f.collected_at DESC
-      LIMIT $2
+        ON t.product_id = q.product_id
+      LEFT JOIN LATERAL (
+        SELECT
+          a.thumbnail_url,
+          a.source_wiki_url
+        FROM public.xxx_tm008_fc2_wiki_articles a
+        WHERE a.product_id = q.product_id
+          AND COALESCE(a.thumbnail_url, '') <> ''
+        ORDER BY
+          a.updated_at DESC NULLS LAST,
+          a.collected_at DESC NULLS LAST,
+          a.id DESC
+        LIMIT 1
+      ) w ON true
+      WHERE q.target_status = 'pending'
+        AND COALESCE(t.thumbnail_status, '') <> 'collected'
+        AND COALESCE(t.attempt_count, 0) < $2
+      ORDER BY
+        q.page_number ASC NULLS LAST,
+        q.row_index_in_page ASC NULLS LAST,
+        CASE WHEN q.product_id ~ '^\\d+$' THEN q.product_id::numeric END DESC NULLS LAST,
+        q.product_id DESC
+      LIMIT $1
     `,
-    [LOOKBACK_HOURS, MAX_DOWNLOADS]
+    [MAX_DOWNLOADS, MAX_ATTEMPTS]
   );
 
   return result.rows;
@@ -396,6 +434,88 @@ async function createRunLog(client, targetsFound) {
     `,
     [RUN_ID, MAX_DOWNLOADS, MAX_DOWNLOADS, MIN_DELAY_MS, MAX_DELAY_MS, MAX_ATTEMPTS, targetsFound, TARGET_SCOPE]
   );
+}
+
+async function ensureDeltaThumbnailTargetTables(client) {
+  await client.query(`
+    CREATE TABLE IF NOT EXISTS public.${TABLE_DELTA_THUMBNAIL_TARGETS} (
+      product_id text PRIMARY KEY,
+      source_run_id text NOT NULL,
+      source_collected_at timestamptz,
+      article_url text,
+      search_page_url text,
+      page_number integer,
+      row_index_in_page integer,
+      article_seller_id text,
+      article_seller_name text,
+      wiki_seller_id bigint,
+      wiki_seller_name text,
+      target_status text NOT NULL DEFAULT 'pending',
+      created_at timestamptz NOT NULL DEFAULT now(),
+      updated_at timestamptz NOT NULL DEFAULT now()
+    );
+  `);
+
+  await client.query(`
+    CREATE TABLE IF NOT EXISTS public.${TABLE_DELTA_THUMBNAIL_TARGET_LOGS} (
+      id bigserial PRIMARY KEY,
+      run_id text NOT NULL,
+      product_id text NOT NULL,
+      article_seller_id text,
+      article_seller_name text,
+      wiki_seller_id bigint,
+      wiki_seller_name text,
+      action text NOT NULL,
+      result_status text NOT NULL,
+      detail text,
+      recorded_at timestamptz NOT NULL DEFAULT now()
+    );
+  `);
+}
+
+async function updateDeltaTargetStatus(client, row, status, detail = "") {
+  await client.query(
+    `
+      UPDATE public.${TABLE_DELTA_THUMBNAIL_TARGETS}
+      SET
+        target_status = $2,
+        updated_at = now()
+      WHERE product_id = $1
+    `,
+    [row.product_id, status]
+  );
+
+  await client.query(
+    `
+      INSERT INTO public.${TABLE_DELTA_THUMBNAIL_TARGET_LOGS} (
+        run_id,
+        product_id,
+        article_seller_id,
+        article_seller_name,
+        wiki_seller_id,
+        wiki_seller_name,
+        action,
+        result_status,
+        detail
+      )
+      VALUES ($1, $2, $3, $4, $5, $6, 'thumbnail_collect', $7, NULLIF($8, ''))
+    `,
+    [
+      RUN_ID,
+      row.product_id || "",
+      row.article_seller_id || "",
+      row.article_seller_name || "",
+      row.wiki_seller_id || null,
+      row.wiki_seller_name || "",
+      status,
+      String(detail || "").slice(0, 1000),
+    ]
+  );
+}
+
+async function cleanupDeltaTargets(client) {
+  const result = await client.query(`DELETE FROM public.${TABLE_DELTA_THUMBNAIL_TARGETS};`);
+  return result.rowCount;
 }
 
 async function finishRunLog(client, status, successCount, failedCount, existingFileCount, lastError = "") {
@@ -529,6 +649,24 @@ async function processThumbnail(client, row) {
   }
 
   if (!isApprovedThumbnailUrl(thumbnailUrl)) {
+    if (row.thumbnail_lookup_status === "fetch_failed") {
+      await markFailed(client, row, "fetch_failed", "FC2 Wiki seller page fetch failed");
+      await logRunItem(client, row, { status: "fetch_failed", errorMessage: "wiki_seller_page_fetch_failed" });
+      return "fetch_failed";
+    }
+
+    if (row.thumbnail_lookup_status === "not_found_yet") {
+      await markFailed(client, row, "not_found_yet", "Thumbnail URL not found in FC2 Wiki article pool");
+      await logRunItem(client, row, { status: "not_found_yet", errorMessage: "thumbnail_url_not_found_yet" });
+      return "not_found_yet";
+    }
+
+    if (row.thumbnail_fetch_error) {
+      await markFailed(client, row, "fetch_failed", row.thumbnail_fetch_error);
+      await logRunItem(client, row, { status: "fetch_failed", errorMessage: row.thumbnail_fetch_error });
+      return "failed";
+    }
+
     await markFailed(client, row, "missing_url", "Missing or unapproved thumbnail URL");
     await logRunItem(client, row, { status: "missing_url", errorMessage: "missing_or_unapproved_url" });
     return "failed";
@@ -588,16 +726,17 @@ async function main() {
   let successCount = 0;
   let failedCount = 0;
   let existingCount = 0;
+  let cleanupCount = 0;
 
   try {
+    await ensureDeltaThumbnailTargetTables(client);
     const candidates = await collectDeltaCandidates(client);
     await createRunLog(client, candidates.length);
 
     console.log("=".repeat(70));
     console.log("FC2 Article Delta Thumbnail Collector");
-    console.log(`lookbackHours : ${LOOKBACK_HOURS}`);
     console.log(`maxDownloads  : ${MAX_DOWNLOADS}`);
-    console.log(`maxPages      : ${MAX_PAGES}`);
+    console.log(`source        : ${TABLE_DELTA_THUMBNAIL_TARGETS}`);
     console.log(`delay         : ${MIN_DELAY_MS}-${MAX_DELAY_MS} ms`);
     console.log(`output        : ${OUTPUT_DIR}`);
     console.log(`targets       : ${candidates.length}`);
@@ -609,60 +748,53 @@ async function main() {
     }
 
     const targetByProductId = new Map(candidates.map((row) => [String(row.product_id), row]));
-    const pageUrls = buildPageUrls(candidates);
-    const scrapedByProductId = new Map();
+    const wikiUrls = [];
+    const seenWikiUrls = new Set();
 
-    for (const pageUrl of pageUrls) {
+    for (const row of candidates) {
+      if (row.thumbnail_url) continue;
+      if (!row.wiki_seller_url || seenWikiUrls.has(row.wiki_seller_url)) continue;
+      seenWikiUrls.add(row.wiki_seller_url);
+      wikiUrls.push(row.wiki_seller_url);
+    }
+
+    for (const wikiUrl of wikiUrls) {
       const wantedProductIds = candidates
-        .filter((row) => firstNonEmpty(row.search_page_url, row.page_number ? buildSearchPageUrl(row.page_number) : "") === pageUrl)
+        .filter((row) => !row.thumbnail_url && row.wiki_seller_url === wikiUrl)
         .map((row) => String(row.product_id));
       let cards = [];
       try {
-        cards = await scrapeThumbnailsFromSearchPage(pageUrl, wantedProductIds);
+        cards = await scrapeThumbnailsFromSearchPage(wikiUrl, wantedProductIds);
       } catch (error) {
-        console.log(`${pageUrl} scrape failed: ${error.message || error}`);
+        console.log(`${wikiUrl} scrape failed: ${error.message || error}`);
+        for (const productId of wantedProductIds) {
+          const row = targetByProductId.get(productId);
+          if (row) row.thumbnail_lookup_status = "fetch_failed";
+        }
         continue;
       }
+
       for (const card of cards) {
         const productId = extractProductIdFromArticleHref(card.href);
-        if (!targetByProductId.has(productId)) continue;
-        scrapedByProductId.set(productId, {
-          thumbnail_url: toAbsoluteUrl(card.thumbnailUrl),
-          source_wiki_url: pageUrl,
-        });
+        const row = targetByProductId.get(productId);
+        if (!row || !card.thumbnailUrl) continue;
+        row.thumbnail_url = toAbsoluteUrl(card.thumbnailUrl);
+        row.source_wiki_url = wikiUrl;
+        row.thumbnail_lookup_status = "found";
       }
     }
 
-    const targets = candidates.map((row) => {
-      const scraped = scrapedByProductId.get(String(row.product_id)) || {};
-      return {
-        ...row,
-        thumbnail_url: scraped.thumbnail_url || "",
-        source_wiki_url: scraped.source_wiki_url || row.search_page_url || "",
-      };
-    });
-
-    for (const row of targets) {
-      if (row.thumbnail_url) continue;
-
-      const delayMs = randomDelayMs();
-      await sleep(delayMs);
-
-      const thumbnailUrl = await scrapeThumbnailFromArticlePage(row.article_url, row.product_id);
-      if (thumbnailUrl) {
-        row.thumbnail_url = thumbnailUrl;
-        row.source_wiki_url = firstNonEmpty(row.article_url, row.search_page_url);
-      }
-    }
-
-    for (const row of targets) {
+    for (const row of candidates) {
       const status = await processThumbnail(client, row);
       if (status === "collected") successCount++;
       else if (status === "existing") existingCount++;
       else failedCount++;
+
+      await updateDeltaTargetStatus(client, row, status, row.thumbnail_lookup_status || "");
     }
 
     await finishRunLog(client, "success", successCount, failedCount, existingCount);
+    cleanupCount = await cleanupDeltaTargets(client);
   } catch (error) {
     console.error(error);
     try {
@@ -680,6 +812,7 @@ async function main() {
   console.log(`run_success : ${successCount}`);
   console.log(`run_failed  : ${failedCount}`);
   console.log(`run_existing: ${existingCount}`);
+  console.log(`queue_deleted: ${cleanupCount}`);
   console.log("=".repeat(70));
 }
 

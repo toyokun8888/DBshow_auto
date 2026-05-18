@@ -122,12 +122,29 @@ async function main() {
         UNION ALL
 
         SELECT
+          f.product_id,
+          ws.id::text AS seller_id,
+          ws.seller_name AS seller_name,
+          COALESCE(f.title, '') AS title,
+          f.collected_at::timestamp without time zone AS source_updated_at,
+          2 AS source_priority
+        FROM public.xxx_tm006_fc2_article_master_full f
+        JOIN public.xxx_tm007_fc2_wiki_sellers ws
+          ON ws.seller_name = f.seller_name
+         AND ws.is_active = true
+         AND ws.is_archived = false
+        WHERE f.product_id IS NOT NULL
+          AND COALESCE(f.seller_name, '') <> ''
+
+        UNION ALL
+
+        SELECT
           m.product_id,
           COALESCE(a.wiki_seller_id, NULLIF(m.seller_id::text, ''), 'master_unknown') AS seller_id,
           COALESCE(a.wiki_seller_name, a.wiki_seller_id, NULLIF(m.seller_id::text, ''), 'master_unknown') AS seller_name,
           COALESCE(m.title, '') AS title,
           NULL::timestamp without time zone AS source_updated_at,
-          2 AS source_priority
+          3 AS source_priority
         FROM public.master m
         LEFT JOIN seller_alias_map a
           ON a.master_seller_id = m.seller_id
