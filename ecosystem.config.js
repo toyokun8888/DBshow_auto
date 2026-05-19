@@ -124,6 +124,31 @@ module.exports = {
       watch: false,
 
       cron_restart: "0 8 * * *"
+    },
+    {
+      name: "daily-1600-sukebei-fc2-torrent",
+
+      script:
+        "C:/Users/toyoaki/Desktop/filedatachange/project_scripts/pm2_scheduled_runner.js",
+
+      cwd:
+        "C:/Users/toyoaki/Desktop/filedatachange",
+
+      env: {
+        SCHEDULE_TARGET_SCRIPT:
+          "C:/Users/toyoaki/Desktop/filedatachange/sukebei_fc2_torrent_downloader.js",
+        SCHEDULE_TARGET_CWD:
+          "C:/Users/toyoaki/Desktop/filedatachange",
+        SCHEDULE_HOUR: "16",
+        SCHEDULE_MINUTE: "0",
+        SCHEDULE_WINDOW_MINUTES: "10"
+      },
+
+      autorestart: false,
+
+      watch: false,
+
+      cron_restart: "0 16 * * *"
     }
   ]
 };

@@ -62,5 +62,40 @@ module.exports = {
 
       log_date_format: "YYYY-MM-DD HH:mm:ss",
     },
+    {
+      name: "daily-0530-qb-completed-cleanup",
+
+      script:
+        "C:/Users/toyoaki/Desktop/filedatachange/project_scripts/pm2_scheduled_runner.js",
+
+      cwd:
+        "C:/Users/toyoaki/Desktop/filedatachange",
+
+      env: {
+        SCHEDULE_TARGET_SCRIPT:
+          "C:/Users/toyoaki/Desktop/filedatachange/qb_completed_cleanup.js",
+        SCHEDULE_TARGET_CWD:
+          "C:/Users/toyoaki/Desktop/filedatachange",
+        SCHEDULE_HOUR: "5",
+        SCHEDULE_MINUTE: "30",
+        SCHEDULE_WINDOW_MINUTES: "10",
+      },
+
+      args: [],
+
+      autorestart: false,
+      watch: false,
+
+      // Daily 05:30 local time. Removes only completed qBittorrent UI registrations.
+      cron_restart: "30 5 * * *",
+
+      out_file:
+        "C:/Users/toyoaki/.pm2/logs/qb-completed-cleanup-out.log",
+
+      error_file:
+        "C:/Users/toyoaki/.pm2/logs/qb-completed-cleanup-error.log",
+
+      log_date_format: "YYYY-MM-DD HH:mm:ss",
+    },
   ],
 };
