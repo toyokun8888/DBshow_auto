@@ -13,8 +13,7 @@ const PRODUCT_ID_RE = /FC2-PPV-(\d{7,})/i;
 const DEFAULTS = {
   SUKEBEI_DRY_RUN: "true",
   SUKEBEI_CONFIRM_EXECUTE: "NO",
-  SUKEBEI_START_PAGE: "1",
-  SUKEBEI_END_PAGE: "5",
+  SUKEBEI_MAX_PAGE_SAFE_LIMIT: "30",
   SUKEBEI_MAX_DOWNLOADS: "5",
   SUKEBEI_TORRENT_DOWNLOAD_DIR: "P:\\hogehoge",
   SUKEBEI_CSV_LOG_DIR: "P:\\hogehoge\\_torrent_logs",
@@ -41,6 +40,7 @@ const CSV_COLUMNS = [
   "run_at",
   "dry_run",
   "page",
+  "posted_date",
   "product_id",
   "title",
   "view_url",
@@ -61,6 +61,7 @@ async function main() {
   const config = buildConfig();
   const runAtDate = new Date();
   const runAt = formatDateTimeWithOffset(runAtDate);
+  const todayDate = formatLocalDate(runAtDate);
   const runId = `sukebei_fc2_${formatDateStamp(runAtDate)}`;
   const csvPath = path.join(config.csvLogDir, `sukebei_fc2_torrent_${config.dryRun ? "dryrun" : "execute"}_${formatDateStamp(runAtDate)}.csv`);
   const rows = [];
@@ -78,7 +79,8 @@ async function main() {
     }
 
     process.stdout.write(`Sukebei FC2 torrent downloader started. run_id=${runId} dry_run=${config.dryRun}\n`);
-    process.stdout.write(`Pages: ${config.startPage}-${config.endPage}\n`);
+    process.stdout.write(`Today date: ${todayDate}\n`);
+    process.stdout.write(`Max page safe limit: ${config.maxPageSafeLimit}\n`);
     process.stdout.write(`Download dir: ${config.downloadDir}\n`);
     process.stdout.write(`Match source: ${config.matchSource}\n`);
     process.stdout.write(`Match table: ${config.matchTable}\n`);
@@ -92,7 +94,7 @@ async function main() {
 
     const rawCandidates = [];
 
-    for (let page = config.startPage; page <= config.endPage; page += 1) {
+    for (let page = 1; page <= config.maxPageSafeLimit; page += 1) {
       await randomWait(config, `before page ${page}`);
       const pageUrl = `${SUKEBEI_BASE_URL}/?c=2_2&p=${page}`;
       process.stdout.write(`Fetch page ${page}: ${pageUrl}\n`);
@@ -100,9 +102,48 @@ async function main() {
       let items = [];
       try {
         const html = await fetchTextWithRetry(pageUrl, config);
-        items = parseItems(html, page);
+        const parsed = parsePageItemsByDate(html, page, todayDate);
+        items = parsed.items;
         rawCandidates.push(...items);
-        process.stdout.write(`Page ${page}: found FC2 candidates=${items.length}\n`);
+        if (parsed.todayRowCount > 0) {
+          const message = `today row found page=${page} date=${todayDate} row_count=${parsed.todayRowCount}`;
+          process.stdout.write(`${message}\n`);
+          rows.push(buildRow({
+            runId,
+            runAt,
+            dryRun: config.dryRun,
+            page,
+            postedDate: todayDate,
+            status: "TODAY_ROW_FOUND",
+            selectionNote: message,
+          }));
+        }
+        process.stdout.write(`Page ${page}: found today FC2 candidates=${items.length}\n`);
+        if (parsed.oldDateDetected) {
+          const oldDateMessage = `old date detected page=${page} row_date=${parsed.oldDate} today=${todayDate}`;
+          const stopMessage = `stop crawling page=${page} reason=old_date_detected`;
+          process.stdout.write(`${oldDateMessage}\n`);
+          process.stdout.write(`${stopMessage}\n`);
+          rows.push(buildRow({
+            runId,
+            runAt,
+            dryRun: config.dryRun,
+            page,
+            postedDate: parsed.oldDate,
+            status: "OLD_DATE_DETECTED",
+            selectionNote: oldDateMessage,
+          }));
+          rows.push(buildRow({
+            runId,
+            runAt,
+            dryRun: config.dryRun,
+            page,
+            postedDate: parsed.oldDate,
+            status: "STOP_CRAWLING",
+            selectionNote: stopMessage,
+          }));
+          break;
+        }
       } catch (error) {
         rows.push(buildRow({
           runId,
@@ -115,6 +156,18 @@ async function main() {
         continue;
       }
 
+      if (page === config.maxPageSafeLimit) {
+        const message = `stop crawling page=${page} reason=max_page_safe_limit`;
+        process.stdout.write(`${message}\n`);
+        rows.push(buildRow({
+          runId,
+          runAt,
+          dryRun: config.dryRun,
+          page,
+          status: "STOP_CRAWLING",
+          selectionNote: message,
+        }));
+      }
     }
 
     const selectedItems = selectHighestSeedCandidates(rawCandidates, rows, { runId, runAt, dryRun: config.dryRun });
@@ -129,6 +182,7 @@ async function main() {
         runAt,
         dryRun: config.dryRun,
         page: item.page,
+        postedDate: item.postedDate,
         productId: item.productId,
         title: item.title,
         viewUrl: item.viewUrl,
@@ -236,8 +290,7 @@ function buildConfig() {
   return {
     dryRun: String(dryRunValue).toLowerCase() === "true",
     confirmExecute: envValue("SUKEBEI_CONFIRM_EXECUTE") || "NO",
-    startPage: parsePositiveInt(envValue("SUKEBEI_START_PAGE") || DEFAULTS.SUKEBEI_START_PAGE),
-    endPage: parsePositiveInt(envValue("SUKEBEI_END_PAGE") || DEFAULTS.SUKEBEI_END_PAGE),
+    maxPageSafeLimit: parsePositiveInt(envValue("SUKEBEI_MAX_PAGE_SAFE_LIMIT") || DEFAULTS.SUKEBEI_MAX_PAGE_SAFE_LIMIT),
     maxDownloads: parsePositiveInt(envValue("SUKEBEI_MAX_DOWNLOADS") || DEFAULTS.SUKEBEI_MAX_DOWNLOADS),
     downloadDir: envValue("SUKEBEI_TORRENT_DOWNLOAD_DIR") || envValue("TORRENT_DOWNLOAD_DIR") || DEFAULTS.SUKEBEI_TORRENT_DOWNLOAD_DIR,
     csvLogDir: envValue("SUKEBEI_CSV_LOG_DIR") || envValue("TORRENT_LOG_DIR") || DEFAULTS.SUKEBEI_CSV_LOG_DIR,
@@ -260,11 +313,8 @@ function buildConfig() {
 }
 
 function validateConfig(config) {
-  if (config.startPage < 1 || config.endPage < config.startPage) {
-    throw new Error(`Invalid page range: ${config.startPage}-${config.endPage}`);
-  }
-  if (config.endPage - config.startPage > 20) {
-    throw new Error("Page range is too large. Keep it to 20 pages or fewer.");
+  if (config.maxPageSafeLimit < 1 || config.maxPageSafeLimit > 30) {
+    throw new Error("SUKEBEI_MAX_PAGE_SAFE_LIMIT must be between 1 and 30.");
   }
   if (config.waitMinMs < 1000 || config.waitMaxMs < config.waitMinMs) {
     throw new Error("Invalid wait range. Use at least 1000ms and max >= min.");
@@ -288,32 +338,68 @@ function validateConfig(config) {
   assertProjectTableName(config.downloadTable, "download table");
 }
 
-function parseItems(html, page) {
+function parsePageItemsByDate(html, page, todayDate) {
   const $ = cheerio.load(html);
   const byTorrentUrl = new Map();
+  let todayRowCount = 0;
+  let oldDateDetected = false;
+  let oldDate = "";
 
-  $("a[href^='/download/'][href$='.torrent']").each((_, link) => {
-    const href = String($(link).attr("href") || "");
-    const row = $(link).closest("tr");
-    const titleLink = row.find("a[href^='/view/'][title]").first();
-    const title = String(titleLink.attr("title") || titleLink.text() || "").trim();
-    const match = title.match(PRODUCT_ID_RE);
-    if (!match) return;
+  $("tr").each((_, rowElement) => {
+    if (oldDateDetected) return;
 
-    const viewHref = String(titleLink.attr("href") || "");
-    const torrentUrl = new URL(href, SUKEBEI_BASE_URL).toString();
-    const seedCount = extractSeedCount(row, $);
-    byTorrentUrl.set(torrentUrl, {
-      page,
-      productId: match[1],
-      title,
-      viewUrl: viewHref ? new URL(viewHref, SUKEBEI_BASE_URL).toString() : "",
-      torrentUrl,
-      seedCount,
+    const row = $(rowElement);
+    const postedDate = extractPostedDate(row, $);
+    if (!postedDate) return;
+
+    if (postedDate !== todayDate) {
+      oldDateDetected = true;
+      oldDate = postedDate;
+      return;
+    }
+
+    todayRowCount += 1;
+    row.find("a[href^='/download/'][href$='.torrent']").each((__, link) => {
+      const href = String($(link).attr("href") || "");
+      const titleLink = row.find("a[href^='/view/'][title]").first();
+      const title = String(titleLink.attr("title") || titleLink.text() || "").trim();
+      const match = title.match(PRODUCT_ID_RE);
+      if (!match) return;
+
+      const viewHref = String(titleLink.attr("href") || "");
+      const torrentUrl = new URL(href, SUKEBEI_BASE_URL).toString();
+      const seedCount = extractSeedCount(row, $);
+      byTorrentUrl.set(torrentUrl, {
+        page,
+        postedDate,
+        productId: match[1],
+        title,
+        viewUrl: viewHref ? new URL(viewHref, SUKEBEI_BASE_URL).toString() : "",
+        torrentUrl,
+        seedCount,
+      });
     });
   });
 
-  return [...byTorrentUrl.values()].sort((a, b) => a.productId.localeCompare(b.productId));
+  return {
+    items: [...byTorrentUrl.values()].sort((a, b) => a.productId.localeCompare(b.productId)),
+    todayRowCount,
+    oldDateDetected,
+    oldDate,
+  };
+}
+
+function extractPostedDate(row, $) {
+  let postedDate = "";
+  row.find("td.text-center").each((_, cell) => {
+    if (postedDate) return;
+    const text = String($(cell).text() || "").trim();
+    const candidate = text.slice(0, 10);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(candidate)) {
+      postedDate = candidate;
+    }
+  });
+  return postedDate;
 }
 
 function extractSeedCount(row, $) {
@@ -363,6 +449,7 @@ function selectHighestSeedCandidates(items, rows, context) {
           runAt: context.runAt,
           dryRun: context.dryRun,
           page: loser.page,
+          postedDate: loser.postedDate,
           productId: loser.productId,
           title: loser.title,
           viewUrl: loser.viewUrl,
@@ -637,6 +724,7 @@ function buildRow(data) {
     run_at: data.runAt || "",
     dry_run: String(data.dryRun),
     page: String(data.page || ""),
+    posted_date: data.postedDate || "",
     product_id: data.productId || "",
     title: data.title || "",
     view_url: data.viewUrl || "",
@@ -771,6 +859,11 @@ function requireEnv(name) {
 function formatDateStamp(date) {
   const parts = getLocalParts(date);
   return `${parts.year}${parts.month}${parts.day}_${parts.hour}${parts.minute}${parts.second}`;
+}
+
+function formatLocalDate(date) {
+  const parts = getLocalParts(date);
+  return `${parts.year}-${parts.month}-${parts.day}`;
 }
 
 function formatDateTimeWithOffset(date) {
