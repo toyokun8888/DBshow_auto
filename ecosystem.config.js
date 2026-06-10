@@ -126,6 +126,7 @@ module.exports = {
       cron_restart: "0 8 * * *"
     },
     {
+      // Name is kept stable so PM2 reloads the existing scheduled process.
       name: "daily-1600-sukebei-fc2-torrent",
 
       script:
@@ -139,8 +140,8 @@ module.exports = {
           "C:/Users/toyoaki/Desktop/filedatachange/sukebei_fc2_torrent_downloader.js",
         SCHEDULE_TARGET_CWD:
           "C:/Users/toyoaki/Desktop/filedatachange",
-        SCHEDULE_HOUR: "16",
-        SCHEDULE_MINUTE: "0",
+        SCHEDULE_HOUR: "23",
+        SCHEDULE_MINUTE: "30",
         SCHEDULE_WINDOW_MINUTES: "10"
       },
 
@@ -148,7 +149,7 @@ module.exports = {
 
       watch: false,
 
-      cron_restart: "0 16 * * *"
+      cron_restart: "30 23 * * *"
     }
   ]
 };

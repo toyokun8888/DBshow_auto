@@ -223,7 +223,7 @@ async function loadTargets(client) {
         o.file_modified_at
       FROM public.xxx_tm002_owned_files o
       WHERE o.status = 'owned'
-        AND lower(COALESCE(o.file_ext, '.mp4')) = '.mp4'
+        AND lower(COALESCE(o.file_ext, '.mp4')) IN ('.mp4', '.mkv')
         ${missingOnlySql}
       ORDER BY o.updated_at DESC NULLS LAST, o.id DESC
       ${limitSql}

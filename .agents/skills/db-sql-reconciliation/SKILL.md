@@ -26,6 +26,7 @@ Read these files before deciding:
 - Views use `xxx_VQ###_...`.
 - Do not use destructive SQL such as `DROP`, `TRUNCATE`, or removing existing columns.
 - New SQL should be additive unless the user explicitly approves otherwise.
+- Do not run PostgreSQL SQL containing `$1`, `$2`, etc. as a PowerShell inline command. PowerShell expands those tokens and can break the SQL. Prefer a small `.js` script run as `node script.js`, with dry-run first and post-check after apply.
 - For schema changes, include pre-check and post-check verification queries where practical.
 - Keep `xxx_TM002_owned_files` for clean matched owned files.
 - Put unmatched or manually-confirm-needed files in `xxx_TM005_unmatched_files` when relevant.

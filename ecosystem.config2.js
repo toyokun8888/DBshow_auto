@@ -27,6 +27,7 @@
 module.exports = {
   apps: [
     {
+      // Name is kept stable so PM2 reloads the existing scheduled process.
       name: "daily-0530-phase2-file-pipeline",
 
       script:
@@ -40,8 +41,8 @@ module.exports = {
           "C:/Users/toyoaki/Desktop/filedatachange/project_scripts/phase2_execute/phase2_file_pipeline2.js",
         SCHEDULE_TARGET_CWD:
           "C:/Users/toyoaki/Desktop/filedatachange/project_scripts/phase2_execute",
-        SCHEDULE_HOUR: "5",
-        SCHEDULE_MINUTE: "30",
+        SCHEDULE_HOUR: "22",
+        SCHEDULE_MINUTE: "0",
         SCHEDULE_WINDOW_MINUTES: "10",
       },
 
@@ -51,8 +52,8 @@ module.exports = {
       autorestart: false,
       watch: false,
 
-      // Daily 05:30 local time.
-      cron_restart: "30 5 * * *",
+      // Daily 22:00 local time.
+      cron_restart: "0 22 * * *",
 
       out_file:
         "C:/Users/toyoaki/.pm2/logs/phase2-file-pipeline-out.log",
@@ -76,8 +77,8 @@ module.exports = {
           "C:/Users/toyoaki/Desktop/filedatachange/qb_completed_cleanup.js",
         SCHEDULE_TARGET_CWD:
           "C:/Users/toyoaki/Desktop/filedatachange",
-        SCHEDULE_HOUR: "5",
-        SCHEDULE_MINUTE: "30",
+        SCHEDULE_HOUR: "7",
+        SCHEDULE_MINUTE: "0",
         SCHEDULE_WINDOW_MINUTES: "10",
       },
 
@@ -86,8 +87,8 @@ module.exports = {
       autorestart: false,
       watch: false,
 
-      // Daily 05:30 local time. Removes only completed qBittorrent UI registrations.
-      cron_restart: "30 5 * * *",
+      // Daily 07:00 local time. Removes only completed qBittorrent UI registrations.
+      cron_restart: "0 7 * * *",
 
       out_file:
         "C:/Users/toyoaki/.pm2/logs/qb-completed-cleanup-out.log",

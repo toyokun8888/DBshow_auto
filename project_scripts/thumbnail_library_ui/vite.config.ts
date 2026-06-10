@@ -101,6 +101,7 @@ function normalizeWindowsPath(targetPath: string): string {
 }
 
 function resolveAllowedRoots(): string[] {
+  loadEnvFile();
   const raw = (process.env.MEDIA_ALLOWED_ROOTS || "").trim();
   if (!raw) return [];
   return raw
@@ -323,7 +324,7 @@ function resolveExistingMediaPath(row: OpenPathResolution): string {
     .readdirSync(folderPath, { withFileTypes: true })
     .filter((entry) => entry.isFile())
     .map((entry) => entry.name)
-    .filter((name) => path.extname(name).toLowerCase() === ".mp4");
+    .filter((name) => [".mp4", ".mkv"].includes(path.extname(name).toLowerCase()));
 
   const exactCurrentFileName = row.current_file_name ? path.join(folderPath, row.current_file_name) : "";
   if (exactCurrentFileName && fs.existsSync(exactCurrentFileName)) return exactCurrentFileName;

@@ -69,10 +69,10 @@ const FOLDER_ID = "3330879";//movie
 const FOLDER_NAME = "movie";
 //const FOLDER_NAME = "JAVDAILY";
 // 取得開始ページ
-const START_PAGE = 6264;
+const START_PAGE = 6272;
 
 // 取得終了ページ
-const END_PAGE = 6272;// 2026-5-17 時点の最大ページ数
+const END_PAGE = 6278;// 2026-5-17 時点の最大ページ数
 //const END_PAGE = 1089;// 2026-5-14 時点の最大ページ数
 //const END_PAGE = 2056// 2026-5-14 時点の最大ページ数
 // 途中再開ページ

@@ -14,6 +14,8 @@ const DEFAULTS = {
   TORRENT_ERROR_DIR: "P:\\hogehoge2\\_torrent_error",
   TORRENT_LOG_DIR: "P:\\hogehoge2\\_torrent_logs",
   TORRENT_DOWNLOAD_DIR: "P:\\hogehoge2\\downloads",
+  QB_API_RETRY_COUNT: "5",
+  QB_API_RETRY_WAIT_MS: "1000",
   DRY_RUN: "true",
   CONFIRM_EXECUTE: "NO",
 };
@@ -182,6 +184,8 @@ function buildConfig() {
     errorDir: readConfig("TORRENT_ERROR_DIR"),
     logDir: readConfig("TORRENT_LOG_DIR"),
     downloadDir: readConfig("TORRENT_DOWNLOAD_DIR"),
+    qbApiRetryCount: readPositiveInt(readConfig("QB_API_RETRY_COUNT"), 5),
+    qbApiRetryWaitMs: readPositiveInt(readConfig("QB_API_RETRY_WAIT_MS"), 1000),
     dryRun: readConfig("DRY_RUN").toLowerCase() === "true",
     confirmExecute: readConfig("CONFIRM_EXECUTE"),
   };
@@ -189,6 +193,11 @@ function buildConfig() {
 
 function readConfig(name) {
   return process.env[name] || DEFAULTS[name];
+}
+
+function readPositiveInt(value, fallback) {
+  const n = Number.parseInt(String(value || ""), 10);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
 }
 
 function normalizeBaseUrl(url) {
@@ -276,11 +285,16 @@ async function loginToQbittorrent(config) {
   body.set("username", config.qbUsername);
   body.set("password", config.qbPassword);
 
-  const response = await fetch(`${config.qbUrl}/api/v2/auth/login`, {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body,
-  });
+  const response = await fetchWithRetry(
+    config,
+    `${config.qbUrl}/api/v2/auth/login`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body,
+    },
+    "qBittorrent login"
+  );
 
   const text = await response.text();
   const loginAccepted =
@@ -297,6 +311,23 @@ async function loginToQbittorrent(config) {
   return { cookie };
 }
 
+async function fetchWithRetry(config, url, options, label) {
+  let lastError = null;
+
+  for (let attempt = 1; attempt <= config.qbApiRetryCount; attempt += 1) {
+    try {
+      return await fetch(url, options);
+    } catch (error) {
+      lastError = error;
+      if (attempt < config.qbApiRetryCount) {
+        await sleep(config.qbApiRetryWaitMs);
+      }
+    }
+  }
+
+  throw new Error(`${label} fetch failed after ${config.qbApiRetryCount} attempts: ${lastError.message}`);
+}
+
 function readSetCookie(response) {
   if (typeof response.headers.getSetCookie === "function") {
     const cookies = response.headers.getSetCookie();
@@ -308,10 +339,15 @@ function readSetCookie(response) {
 }
 
 async function getTorrents(config, session) {
-  const response = await fetch(`${config.qbUrl}/api/v2/torrents/info`, {
-    method: "GET",
-    headers: { Cookie: session.cookie },
-  });
+  const response = await fetchWithRetry(
+    config,
+    `${config.qbUrl}/api/v2/torrents/info`,
+    {
+      method: "GET",
+      headers: { Cookie: session.cookie },
+    },
+    "qBittorrent torrent list"
+  );
 
   const text = await response.text();
   if (!response.ok) {
@@ -330,11 +366,16 @@ async function addTorrent(config, session, torrentPath, knownHashes) {
     form.append("savepath", config.downloadDir);
     form.append("autoTMM", "false");
 
-    const response = await fetch(`${config.qbUrl}/api/v2/torrents/add`, {
-      method: "POST",
-      headers: { Cookie: session.cookie },
-      body: form,
-    });
+    const response = await fetchWithRetry(
+      config,
+      `${config.qbUrl}/api/v2/torrents/add`,
+      {
+        method: "POST",
+        headers: { Cookie: session.cookie },
+        body: form,
+      },
+      "qBittorrent torrent add"
+    );
 
     const text = await response.text();
     if (!response.ok || !isQbAddSuccess(text)) {

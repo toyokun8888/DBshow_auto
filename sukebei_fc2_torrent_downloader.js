@@ -8,16 +8,16 @@ const { Client } = require("pg");
 const PROJECT_ROOT = __dirname;
 const ENV_PATH = path.join(PROJECT_ROOT, ".env");
 const SUKEBEI_BASE_URL = "https://sukebei.nyaa.si";
-const PRODUCT_ID_RE = /FC2-PPV-(\d{7,})/i;
+const PRODUCT_ID_RE = /FC2[-_ ]*PPV[-_ ]*(\d{6,})/i;
 
 const DEFAULTS = {
   SUKEBEI_DRY_RUN: "true",
   SUKEBEI_CONFIRM_EXECUTE: "NO",
   SUKEBEI_MAX_PAGE_SAFE_LIMIT: "30",
-  SUKEBEI_MAX_DOWNLOADS: "5",
+  SUKEBEI_MAX_DOWNLOADS: "0",
   SUKEBEI_TORRENT_DOWNLOAD_DIR: "P:\\hogehoge",
   SUKEBEI_CSV_LOG_DIR: "P:\\hogehoge\\_torrent_logs",
-  SUKEBEI_MATCH_SOURCE: "target_table",
+  SUKEBEI_MATCH_SOURCE: "owned_view",
   SUKEBEI_MATCH_TABLE: "public.xxx_tm010_fc2_delta_thumbnail_targets",
   SUKEBEI_MATCH_PRODUCT_ID_COLUMN: "product_id",
   SUKEBEI_MATCH_STATUS_COLUMN: "target_status",
@@ -26,6 +26,9 @@ const DEFAULTS = {
   SUKEBEI_MATCH_LOG_ACTION: "enqueue",
   SUKEBEI_MATCH_LOG_STATUS: "pending",
   SUKEBEI_MATCH_LOG_LIMIT: "100",
+  SUKEBEI_OWNED_PRODUCT_IDS_VIEW: "public.xxx_vq002_owned_product_ids",
+  SUKEBEI_MASTER_TABLE: "public.xxx_tm006_fc2_article_master_full",
+  SUKEBEI_MANUAL_MASTER_IMPORT_CSV: path.join(PROJECT_ROOT, "manual_master_import.csv"),
   SUKEBEI_DOWNLOAD_TABLE: "public.xxx_tm012_sukebei_torrent_downloads",
   SUKEBEI_REQUEST_TIMEOUT_MS: "20000",
   SUKEBEI_RETRY_COUNT: "3",
@@ -85,11 +88,17 @@ async function main() {
     process.stdout.write(`Match source: ${config.matchSource}\n`);
     process.stdout.write(`Match table: ${config.matchTable}\n`);
     process.stdout.write(`Match log table: ${config.matchLogTable}\n`);
+    process.stdout.write(`Owned product ids view: ${config.ownedProductIdsView}\n`);
+    process.stdout.write(`Master table: ${config.masterTable}\n`);
+    process.stdout.write(`Manual master import CSV: ${config.manualMasterImportCsv}\n`);
     process.stdout.write(`Download table: ${config.downloadTable}\n`);
 
     const matchContext = await loadMatchContext(client, config);
     if (matchContext.type === "delta_log_latest") {
       process.stdout.write(`Eligible product_id from latest log: ${matchContext.productIds.size}/${config.matchLogLimit}\n`);
+    } else if (matchContext.type === "owned_view") {
+      process.stdout.write(`Owned product_id loaded: ${matchContext.ownedProductIds.size}\n`);
+      process.stdout.write(`Master product_id loaded: ${matchContext.masterProductIds.size}\n`);
     }
 
     const rawCandidates = [];
@@ -172,6 +181,7 @@ async function main() {
 
     const selectedItems = selectHighestSeedCandidates(rawCandidates, rows, { runId, runAt, dryRun: config.dryRun });
     let executedDownloads = 0;
+    const manualMasterCandidates = [];
 
     for (const item of selectedItems) {
       const plannedFilePath = buildCollisionSafePath(
@@ -199,13 +209,23 @@ async function main() {
       let reserved = false;
 
       try {
-        matched = await hasProductIdInMatchSource(client, config, matchContext, item.productId);
-        if (!matched) {
-          rows.push(buildRow({ ...baseRow, matchedDb: false, duplicate: false, status: "SKIPPED_NOT_IN_MATCH_TABLE" }));
+        const eligibility = await evaluateCandidate(client, config, matchContext, item.productId);
+        matched = eligibility.shouldDownload;
+        if (eligibility.shouldAddManualMasterImport) {
+          manualMasterCandidates.push(item);
+        }
+        if (!eligibility.shouldDownload) {
+          rows.push(buildRow({
+            ...baseRow,
+            matchedDb: false,
+            duplicate: false,
+            status: eligibility.skipStatus,
+            selectionNote: appendNote(baseRow.selectionNote, eligibility.detail),
+          }));
           continue;
         }
 
-        duplicate = await isAlreadyDownloaded(client, config, item.torrentUrl);
+        duplicate = await isAlreadyDownloaded(client, config, item);
         if (duplicate) {
           rows.push(buildRow({ ...baseRow, matchedDb: true, duplicate: true, status: "SKIPPED_DUPLICATE" }));
           continue;
@@ -216,7 +236,7 @@ async function main() {
           continue;
         }
 
-        if (executedDownloads >= config.maxDownloads) {
+        if (config.maxDownloads > 0 && executedDownloads >= config.maxDownloads) {
           rows.push(buildRow({ ...baseRow, matchedDb: true, duplicate: false, status: "SKIPPED_LIMIT_REACHED" }));
           continue;
         }
@@ -246,7 +266,7 @@ async function main() {
           plannedFilePath: finalFilePath,
           status: "DOWNLOADED",
         }));
-        process.stdout.write(`Downloaded ${executedDownloads}/${config.maxDownloads}: ${finalFilePath}\n`);
+        process.stdout.write(`Downloaded ${executedDownloads}/${formatDownloadLimit(config.maxDownloads)}: ${finalFilePath}\n`);
       } catch (error) {
         rows.push(buildRow({
           ...baseRow,
@@ -265,6 +285,53 @@ async function main() {
             lastError: error.message,
           });
         }
+      }
+    }
+
+    if (config.dryRun) {
+      for (const item of uniqueByProductId(manualMasterCandidates)) {
+        rows.push(buildRow({
+          runId,
+          runAt,
+          dryRun: true,
+          page: item.page,
+          postedDate: item.postedDate,
+          productId: item.productId,
+          title: item.title,
+          viewUrl: item.viewUrl,
+          torrentUrl: item.torrentUrl,
+          seedCount: item.seedCount,
+          candidateCount: item.candidateCount,
+          selectedSeed: item.selectedSeed,
+          selectionNote: "manual_master_import_candidate",
+          matchedDb: true,
+          duplicate: false,
+          status: "DRY_RUN_MANUAL_MASTER_IMPORT_CANDIDATE",
+        }));
+      }
+    } else {
+      try {
+        const appendedManualCount = appendManualMasterImportRows(config.manualMasterImportCsv, manualMasterCandidates);
+        if (appendedManualCount > 0) {
+          rows.push(buildRow({
+            runId,
+            runAt,
+            dryRun: false,
+            status: "MANUAL_MASTER_IMPORT_APPENDED",
+            selectionNote: `appended_rows=${appendedManualCount}`,
+            plannedFilePath: config.manualMasterImportCsv,
+          }));
+        }
+      } catch (error) {
+        rows.push(buildRow({
+          runId,
+          runAt,
+          dryRun: false,
+          status: "ERROR",
+          selectionNote: "manual_master_import_append_failed",
+          plannedFilePath: config.manualMasterImportCsv,
+          errorMessage: error.message,
+        }));
       }
     }
   } finally {
@@ -303,6 +370,11 @@ function buildConfig() {
     matchLogAction: envValue("SUKEBEI_MATCH_LOG_ACTION") || DEFAULTS.SUKEBEI_MATCH_LOG_ACTION,
     matchLogStatus: envValue("SUKEBEI_MATCH_LOG_STATUS") || DEFAULTS.SUKEBEI_MATCH_LOG_STATUS,
     matchLogLimit: parsePositiveInt(envValue("SUKEBEI_MATCH_LOG_LIMIT") || DEFAULTS.SUKEBEI_MATCH_LOG_LIMIT),
+    ownedProductIdsView: envValue("SUKEBEI_OWNED_PRODUCT_IDS_VIEW") || DEFAULTS.SUKEBEI_OWNED_PRODUCT_IDS_VIEW,
+    masterTable: envValue("SUKEBEI_MASTER_TABLE") || DEFAULTS.SUKEBEI_MASTER_TABLE,
+    manualMasterImportCsv: resolveProjectPath(
+      envValue("SUKEBEI_MANUAL_MASTER_IMPORT_CSV") || DEFAULTS.SUKEBEI_MANUAL_MASTER_IMPORT_CSV
+    ),
     downloadTable: envValue("SUKEBEI_DOWNLOAD_TABLE") || DEFAULTS.SUKEBEI_DOWNLOAD_TABLE,
     timeoutMs: parsePositiveInt(envValue("SUKEBEI_REQUEST_TIMEOUT_MS") || DEFAULTS.SUKEBEI_REQUEST_TIMEOUT_MS),
     retryCount: parsePositiveInt(envValue("SUKEBEI_RETRY_COUNT") || DEFAULTS.SUKEBEI_RETRY_COUNT),
@@ -322,7 +394,7 @@ function validateConfig(config) {
   if (!config.dryRun && config.confirmExecute !== "YES") {
     throw new Error("Execute requires SUKEBEI_DRY_RUN=false and SUKEBEI_CONFIRM_EXECUTE=YES.");
   }
-  if (!["target_table", "delta_log_latest"].includes(config.matchSource)) {
+  if (!["target_table", "delta_log_latest", "owned_view"].includes(config.matchSource)) {
     throw new Error(`Invalid SUKEBEI_MATCH_SOURCE: ${config.matchSource}`);
   }
   assertSafeQualifiedName(config.matchTable, "match table");
@@ -334,6 +406,11 @@ function validateConfig(config) {
   if (config.matchLogLimit < 1 || config.matchLogLimit > 500) {
     throw new Error("SUKEBEI_MATCH_LOG_LIMIT must be between 1 and 500.");
   }
+  assertSafeQualifiedName(config.ownedProductIdsView, "owned product ids view");
+  assertProjectDbObjectName(config.ownedProductIdsView, "owned product ids view", /^xxx_vq\d{3}_[a-zA-Z0-9_]+$/);
+  assertSafeQualifiedName(config.masterTable, "master table");
+  assertProjectTableName(config.masterTable, "master table");
+  assertProjectCsvPath(config.manualMasterImportCsv, "manual master import CSV");
   assertSafeQualifiedName(config.downloadTable, "download table");
   assertProjectTableName(config.downloadTable, "download table");
 }
@@ -563,6 +640,19 @@ async function loadMatchContext(client, config) {
     return { type: "target_table" };
   }
 
+  if (config.matchSource === "owned_view") {
+    const [ownedRows, masterRows] = await Promise.all([
+      loadProductIds(client, config.ownedProductIdsView),
+      loadProductIds(client, config.masterTable),
+    ]);
+
+    return {
+      type: "owned_view",
+      ownedProductIds: new Set(ownedRows.map((row) => String(row.product_id))),
+      masterProductIds: new Set(masterRows.map((row) => String(row.product_id))),
+    };
+  }
+
   const downloadTableExists = await tableExists(client, config.downloadTable);
   const rows = downloadTableExists
     ? await loadLatestLogProductIdsExcludingDownloaded(client, config)
@@ -573,6 +663,13 @@ async function loadMatchContext(client, config) {
     productIds: new Set(rows.map((row) => String(row.product_id))),
     rows,
   };
+}
+
+async function loadProductIds(client, qualifiedName) {
+  const result = await client.query(
+    `SELECT product_id FROM ${qualifiedName} WHERE product_id IS NOT NULL`
+  );
+  return result.rows;
 }
 
 async function loadLatestLogProductIds(client, config) {
@@ -623,11 +720,34 @@ async function loadLatestLogProductIdsExcludingDownloaded(client, config) {
   return result.rows;
 }
 
-async function hasProductIdInMatchSource(client, config, matchContext, productId) {
+async function evaluateCandidate(client, config, matchContext, productId) {
   if (matchContext.type === "delta_log_latest") {
-    return matchContext.productIds.has(String(productId));
+    const inLatestLog = matchContext.productIds.has(String(productId));
+    return {
+      shouldDownload: inLatestLog,
+      shouldAddManualMasterImport: false,
+      skipStatus: "SKIPPED_NOT_IN_MATCH_TABLE",
+      detail: inLatestLog ? "" : "not_in_latest_delta_log",
+    };
   }
-  return hasProductIdInMatchTable(client, config, productId);
+  if (matchContext.type === "owned_view") {
+    const key = String(productId);
+    const owned = matchContext.ownedProductIds.has(key);
+    const masterExists = matchContext.masterProductIds.has(key);
+    return {
+      shouldDownload: !owned,
+      shouldAddManualMasterImport: !owned && !masterExists,
+      skipStatus: "SKIPPED_OWNED_PRODUCT_ID",
+      detail: owned ? "owned_product_id" : "",
+    };
+  }
+  const inTargetTable = await hasProductIdInMatchTable(client, config, productId);
+  return {
+    shouldDownload: inTargetTable,
+    shouldAddManualMasterImport: false,
+    skipStatus: "SKIPPED_NOT_IN_MATCH_TABLE",
+    detail: inTargetTable ? "" : "not_in_match_table",
+  };
 }
 
 async function hasProductIdInMatchTable(client, config, productId) {
@@ -636,16 +756,16 @@ async function hasProductIdInMatchTable(client, config, productId) {
   return result.rowCount > 0;
 }
 
-async function isAlreadyDownloaded(client, config, torrentUrl) {
+async function isAlreadyDownloaded(client, config, item) {
   const exists = await tableExists(client, config.downloadTable);
   if (!exists) return false;
 
   const result = await client.query(
     `SELECT 1 FROM ${config.downloadTable}
-     WHERE torrent_url = $1
+     WHERE (torrent_url = $1 OR product_id = $2)
        AND status IN ('reserved', 'downloaded', 'dry_run', 'skipped_duplicate')
      LIMIT 1`,
-    [torrentUrl]
+    [item.torrentUrl, item.productId]
   );
   return result.rowCount > 0;
 }
@@ -761,6 +881,85 @@ function writeCsv(csvPath, rows, columns) {
   return safePath;
 }
 
+function appendManualMasterImportRows(csvPath, candidates) {
+  const uniqueCandidates = uniqueByProductId(candidates);
+  if (uniqueCandidates.length === 0) return 0;
+
+  ensureManualMasterImportCsv(csvPath);
+  const existingProductIds = loadFirstColumnValues(csvPath);
+  const lines = [];
+
+  for (const item of uniqueCandidates) {
+    if (existingProductIds.has(String(item.productId))) continue;
+    lines.push([
+      csvEscape(item.productId),
+      csvEscape(item.title),
+      csvEscape(""),
+    ].join(","));
+    existingProductIds.add(String(item.productId));
+  }
+
+  if (lines.length === 0) return 0;
+  fs.appendFileSync(csvPath, `${lines.join("\n")}\n`, { encoding: "utf8" });
+  return lines.length;
+}
+
+function ensureManualMasterImportCsv(csvPath) {
+  ensureDirectory(path.dirname(csvPath));
+  if (!fs.existsSync(csvPath) || fs.statSync(csvPath).size === 0) {
+    fs.writeFileSync(csvPath, "product_id,title,seller_id\n", { encoding: "utf8", flag: "w" });
+  }
+}
+
+function loadFirstColumnValues(csvPath) {
+  if (!fs.existsSync(csvPath)) return new Set();
+  const text = fs.readFileSync(csvPath, "utf8").replace(/^\uFEFF/, "");
+  const values = new Set();
+
+  for (const rawLine of text.split(/\r?\n/)) {
+    if (!rawLine.trim()) continue;
+    const firstValue = readCsvFirstField(rawLine).trim();
+    if (!firstValue || firstValue === "product_id") continue;
+    values.add(firstValue);
+  }
+
+  return values;
+}
+
+function readCsvFirstField(line) {
+  if (!line.startsWith("\"")) {
+    return line.split(",", 1)[0] || "";
+  }
+
+  let value = "";
+  for (let index = 1; index < line.length; index += 1) {
+    const char = line[index];
+    if (char === "\"" && line[index + 1] === "\"") {
+      value += "\"";
+      index += 1;
+      continue;
+    }
+    if (char === "\"") return value;
+    value += char;
+  }
+  return value;
+}
+
+function uniqueByProductId(items) {
+  const byProductId = new Map();
+  for (const item of items) {
+    const key = String(item.productId || "");
+    if (key && !byProductId.has(key)) byProductId.set(key, item);
+  }
+  return [...byProductId.values()].sort((a, b) => String(a.productId).localeCompare(String(b.productId), "en"));
+}
+
+function appendNote(current, addition) {
+  if (!addition) return current || "";
+  if (!current) return addition;
+  return `${current}; ${addition}`;
+}
+
 function csvEscape(value) {
   const text = String(value == null ? "" : value);
   return `"${text.replace(/"/g, '""')}"`;
@@ -795,6 +994,16 @@ function parsePositiveInt(value) {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
 }
 
+function formatDownloadLimit(maxDownloads) {
+  return maxDownloads > 0 ? String(maxDownloads) : "unlimited";
+}
+
+function resolveProjectPath(value) {
+  const rawPath = String(value || "").trim();
+  if (!rawPath) return "";
+  return path.resolve(PROJECT_ROOT, rawPath);
+}
+
 function assertSafeQualifiedName(value, label) {
   if (!/^[a-zA-Z_][a-zA-Z0-9_]*\.[a-zA-Z_][a-zA-Z0-9_]*$/.test(value)) {
     throw new Error(`Unsafe ${label}: ${value}`);
@@ -809,6 +1018,17 @@ function assertProjectDbObjectName(value, label, pattern) {
   const tableName = value.split(".")[1] || "";
   if (!pattern.test(tableName)) {
     throw new Error(`${label} does not follow project DB naming: ${value}`);
+  }
+}
+
+function assertProjectCsvPath(value, label) {
+  const resolvedRoot = path.resolve(PROJECT_ROOT);
+  const resolvedPath = path.resolve(value);
+  if (path.extname(resolvedPath).toLowerCase() !== ".csv") {
+    throw new Error(`${label} must be a CSV path: ${value}`);
+  }
+  if (resolvedPath !== resolvedRoot && !resolvedPath.startsWith(`${resolvedRoot}${path.sep}`)) {
+    throw new Error(`${label} must stay inside project root: ${value}`);
   }
 }
 

@@ -1,5 +1,6 @@
 const fs = require("fs");
 const path = require("path");
+const { spawn } = require("child_process");
 const express = require("express");
 const cors = require("cors");
 const { Pool } = require("pg");
@@ -110,12 +111,102 @@ function resolveThumbnailRoots() {
     : [normalizeWindowsPath(path.join(PROJECT_ROOT, "fc2_sum"))];
 }
 
+function resolveMediaRoots() {
+  const raw = (process.env.MEDIA_ALLOWED_ROOTS || "").trim();
+  const configuredRoots = raw
+    ? raw
+        .split(";")
+        .map((value) => normalizeWindowsPath(value.trim()))
+        .filter(Boolean)
+    : [];
+  return configuredRoots.length > 0
+    ? configuredRoots
+    : ["D", "E", "F", "G", "H", "I", "J", "K", "L", "N", "P", "Q"].map((drive) =>
+        normalizeWindowsPath(`${drive}:\\all_fc2`)
+      );
+}
+
 function isPathUnderRoots(targetPath, roots) {
   const normalized = normalizeWindowsPath(targetPath).toLowerCase();
   return roots.some((root) => {
     const rootLower = normalizeWindowsPath(root).toLowerCase().replace(/[\\]+$/, "");
     return normalized === rootLower || normalized.startsWith(`${rootLower}\\`);
   });
+}
+
+function assertMediaPathAllowed(targetPath) {
+  const normalized = normalizeWindowsPath(targetPath);
+  if (!normalized) {
+    throw new Error("path_empty");
+  }
+  if (!isPathUnderRoots(normalized, resolveMediaRoots())) {
+    throw new Error("path_not_allowed");
+  }
+  return normalized;
+}
+
+function quoteCmdArg(value) {
+  return `"${String(value).replace(/"/g, '\\"')}"`;
+}
+
+function launchDetached(command, args, visible = false) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, {
+      detached: true,
+      stdio: "ignore",
+      windowsHide: !visible,
+      shell: false,
+    });
+    let settled = false;
+    const done = (error) => {
+      if (settled) return;
+      settled = true;
+      if (error) reject(error);
+      else resolve();
+    };
+    child.once("error", done);
+    child.unref();
+    setTimeout(() => done(), 350);
+  });
+}
+
+async function openFolderPath(targetPath) {
+  const normalized = assertMediaPathAllowed(targetPath);
+  const folderPath = fs.existsSync(normalized) && fs.statSync(normalized).isDirectory()
+    ? normalized
+    : path.dirname(normalized);
+
+  if (!isPathUnderRoots(folderPath, resolveMediaRoots())) {
+    throw new Error("folder_not_allowed");
+  }
+  if (!fs.existsSync(folderPath)) {
+    throw new Error("folder_not_exists");
+  }
+
+  await launchDetached("C:\\Windows\\explorer.exe", [folderPath], true);
+}
+
+async function openFilePath(targetPath) {
+  const normalized = assertMediaPathAllowed(targetPath);
+  if (!fs.existsSync(normalized)) {
+    throw new Error("file_not_exists");
+  }
+
+  const launchTemplate = String(process.env.MPC_BE_LAUNCH_TEMPLATE || "").trim();
+  if (launchTemplate) {
+    const quotedPath = quoteCmdArg(normalized);
+    const command = launchTemplate.replaceAll('"{file}"', quotedPath).replaceAll("{file}", quotedPath);
+    await launchDetached("cmd.exe", ["/d", "/s", "/c", command], true);
+    return;
+  }
+
+  const mpcPath = String(process.env.MPC_BE_PATH || "").trim();
+  if (mpcPath && fs.existsSync(normalizeWindowsPath(mpcPath))) {
+    await launchDetached(normalizeWindowsPath(mpcPath), [normalized], true);
+    return;
+  }
+
+  await launchDetached("C:\\Windows\\explorer.exe", [normalized], true);
 }
 
 function contentTypeForImage(filePath) {
@@ -820,6 +911,32 @@ async function main() {
       res.statusCode = 200;
       res.setHeader("Content-Type", contentTypeForImage(normalized));
       fs.createReadStream(normalized).pipe(res);
+    } catch (error) {
+      res.status(500).json({
+        ok: false,
+        message: error.message,
+      });
+    }
+  });
+
+  app.post("/api/library/open-folder", async (req, res) => {
+    try {
+      const targetPath = String(req.body.fullPath || req.body.filePath || "").trim();
+      await openFolderPath(targetPath);
+      res.json({ ok: true, mode: "folder" });
+    } catch (error) {
+      res.status(500).json({
+        ok: false,
+        message: error.message,
+      });
+    }
+  });
+
+  app.post("/api/library/open-file", async (req, res) => {
+    try {
+      const targetPath = String(req.body.fullPath || req.body.filePath || "").trim();
+      await openFilePath(targetPath);
+      res.json({ ok: true, mode: "file" });
     } catch (error) {
       res.status(500).json({
         ok: false,

@@ -88,6 +88,8 @@ const CSV_COLUMNS = [
   "file_modified_at",
 ];
 
+const VIDEO_EXTENSIONS = new Set([".mp4", ".mkv"]);
+
 const NON_MP4_CSV_COLUMNS = [
   "run_id",
   "mode",
@@ -125,19 +127,19 @@ async function main() {
 
   const allFiles = listFilesRecursive(config.inputDir, excludeDirs);
 
-  const mp4Files = allFiles.filter(
-    (filePath) => path.extname(filePath).toLowerCase() === ".mp4"
+  const videoFiles = allFiles.filter(
+    (filePath) => isSupportedVideoFile(filePath)
   );
 
-  const nonMp4Files = allFiles.filter(
-    (filePath) => path.extname(filePath).toLowerCase() !== ".mp4"
+  const nonVideoFiles = allFiles.filter(
+    (filePath) => !isSupportedVideoFile(filePath) && !isIgnoredNonVideoFile(filePath, config)
   );
 
-  const selectedMp4Files = Number.isInteger(args.limit)
-    ? mp4Files.slice(0, args.limit)
-    : mp4Files;
+  const selectedVideoFiles = Number.isInteger(args.limit)
+    ? videoFiles.slice(0, args.limit)
+    : videoFiles;
 
-  const master = await loadMaster(config, selectedMp4Files);
+  const master = await loadMaster(config, selectedVideoFiles);
 
   const plannedPathSet = new Set();
   const rows = [];
@@ -146,7 +148,7 @@ async function main() {
   const dbClient = config.mode === "execute" ? await connectDb(config) : null;
 
   try {
-    for (const filePath of selectedMp4Files) {
+    for (const filePath of selectedVideoFiles) {
       const row = await processOne({
         filePath,
         runId,
@@ -159,14 +161,14 @@ async function main() {
       rows.push(row);
     }
 
-    const selectedMp4Set = new Set(selectedMp4Files.map((p) => path.resolve(p).toLowerCase()));
+    const selectedVideoSet = new Set(selectedVideoFiles.map((p) => path.resolve(p).toLowerCase()));
 
-    const nonMp4Targets =
+    const nonVideoTargets =
       Number.isInteger(args.limit)
-        ? nonMp4Files.filter((p) => !selectedMp4Set.has(path.resolve(p).toLowerCase()))
-        : nonMp4Files;
+        ? nonVideoFiles.filter((p) => !selectedVideoSet.has(path.resolve(p).toLowerCase()))
+        : nonVideoFiles;
 
-    for (const filePath of nonMp4Targets) {
+    for (const filePath of nonVideoTargets) {
       const row = await processNonMp4File({
         filePath,
         runId,
@@ -195,16 +197,16 @@ async function main() {
   process.stdout.write(
     [
       `Phase2 recursive pipeline completed (${config.mode}).`,
-      `MP4 Processed: ${rows.length}`,
-      `MP4 Matched: ${summary.matched}`,
-      `MP4 Unmatched: ${summary.unmatched}`,
-      `MP4 Hold: ${summary.hold}`,
-      `MP4 Error: ${summary.error}`,
-      `Non-MP4 Processed: ${nonMp4Rows.length}`,
-      `Non-MP4 Moved/DryRun: ${nonMp4Summary.ok}`,
-      `Non-MP4 Error: ${nonMp4Summary.error}`,
-      `MP4 CSV: ${csvPath}`,
-      `Non-MP4 CSV: ${nonMp4CsvPath}`,
+      `Video Processed: ${rows.length}`,
+      `Video Matched: ${summary.matched}`,
+      `Video Unmatched: ${summary.unmatched}`,
+      `Video Hold: ${summary.hold}`,
+      `Video Error: ${summary.error}`,
+      `Non-Video Processed: ${nonMp4Rows.length}`,
+      `Non-Video Moved/DryRun: ${nonMp4Summary.ok}`,
+      `Non-Video Error: ${nonMp4Summary.error}`,
+      `Video CSV: ${csvPath}`,
+      `Non-Video CSV: ${nonMp4CsvPath}`,
       "",
     ].join("\n")
   );
@@ -230,6 +232,7 @@ function parseArgs(argv) {
     else if (key === "--hold-dir") args.holdDir = consumeValue(key, next, argv, ++i);
     else if (key === "--error-dir") args.errorDir = consumeValue(key, next, argv, ++i);
     else if (key === "--inspection-dir") args.inspectionDir = consumeValue(key, next, argv, ++i);
+    else if (key === "--ignore-non-video-exts") args.ignoreNonVideoExts = consumeValue(key, next, argv, ++i);
     else if (key === "--run-id") args.runId = consumeValue(key, next, argv, ++i);
     else if (key === "--confirm-execute") args.confirmExecute = consumeValue(key, next, argv, ++i);
     else if (key === "--limit") args.limit = Number.parseInt(consumeValue(key, next, argv, ++i), 10);
@@ -274,6 +277,7 @@ function buildConfig(args) {
     holdDir: args.holdDir || envValue("PHASE2_FILE_PIPELINE_HOLD_DIR") || CONFIG.holdDir,
     errorDir: args.errorDir || envValue("PHASE2_FILE_PIPELINE_ERROR_DIR") || CONFIG.errorDir,
     inspectionDir: args.inspectionDir || envValue("PHASE2_FILE_PIPELINE_INSPECTION_DIR") || CONFIG.inspectionDir,
+    ignoredNonVideoExtensions: parseExtensionList(args.ignoreNonVideoExts),
     ffprobeTimeoutMs:
       parsePositiveInt(args.ffprobeTimeoutMs) ||
       parsePositiveInt(envValue("PHASE2_FILE_PIPELINE_FFPROBE_TIMEOUT_MS")) ||
@@ -284,6 +288,22 @@ function buildConfig(args) {
 function parsePositiveInt(value) {
   const parsed = Number.parseInt(value, 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+}
+
+function parseExtensionList(value) {
+  return new Set(
+    String(value || "")
+      .split(",")
+      .map((item) => item.trim().toLowerCase().replace(/^\./, ""))
+      .filter(Boolean)
+      .map((item) => `.${item}`)
+  );
+}
+
+function isIgnoredNonVideoFile(filePath, config) {
+  const ignored = config.ignoredNonVideoExtensions;
+  if (!ignored || ignored.size === 0) return false;
+  return ignored.has(path.extname(filePath).toLowerCase());
 }
 
 function buildExcludeDirs(config) {
@@ -302,6 +322,7 @@ async function processOne(ctx) {
 
   const stat = await fsp.stat(filePath);
   const fileName = path.basename(filePath);
+  const sourceExt = path.extname(fileName).toLowerCase();
   const extracted = extractProductIds(fileName);
 
   const base = {
@@ -376,6 +397,7 @@ async function processOne(ctx) {
     extracted.primaryProductId,
     masterRow.title,
     extracted.partLabel,
+    sourceExt,
     config.maxFileNameLength
   );
 
@@ -442,6 +464,7 @@ async function finalizeRow(
             productId: extraction.primaryProductId,
             currentPath: targetPath,
             currentFileName: path.basename(targetPath),
+            fileExt: path.extname(targetPath).toLowerCase(),
             source: config.sourceLabel,
             matchedBy: config.matchedByLabel,
             fileSize: targetStat.size,
@@ -828,13 +851,14 @@ async function ensureVideoMetadataTable(client, config) {
 async function insertOwned(client, config, row) {
   const result = await client.query(
     `INSERT INTO ${config.dbOwnedTable}
-      (product_id, current_path, current_file_name, source, matched_by, status, file_size, file_modified_at, created_at, updated_at)
-     VALUES ($1,$2,$3,$4,$5,'owned',$6,$7,NOW(),NOW())
+      (product_id, current_path, current_file_name, file_ext, source, matched_by, status, file_size, file_modified_at, created_at, updated_at)
+     VALUES ($1,$2,$3,$4,$5,$6,'owned',$7,$8,NOW(),NOW())
      RETURNING id`,
     [
       row.productId,
       row.currentPath,
       row.currentFileName,
+      row.fileExt,
       row.source,
       row.matchedBy,
       row.fileSize,
@@ -1074,9 +1098,16 @@ function extractProductIds(fileName) {
   };
 }
 
-function buildPlannedFileName(productId, title, partLabel, maxLength) {
+function isSupportedVideoFile(filePath) {
+  return VIDEO_EXTENSIONS.has(path.extname(filePath).toLowerCase());
+}
+
+function buildPlannedFileName(productId, title, partLabel, sourceExt, maxLength) {
   const safeTitle = sanitizePathSegment(title, "no_title");
-  const raw = `FC2 PPV ${productId} ${safeTitle}${partLabel}.mp4`;
+  const safeExt = VIDEO_EXTENSIONS.has(String(sourceExt).toLowerCase())
+    ? String(sourceExt).toLowerCase()
+    : ".mp4";
+  const raw = `FC2 PPV ${productId} ${safeTitle}${partLabel}${safeExt}`;
 
   if (raw.length <= maxLength) return raw;
 
@@ -1174,8 +1205,8 @@ function buildRecoverySql({ config, base, matchStatus, reason, extraction, moved
   if (matchStatus === "matched") {
     return [
       `-- ${base.source_file_name}`,
-      `INSERT INTO ${config.dbOwnedTable} (product_id, current_path, current_file_name, source, matched_by, status, file_size, file_modified_at, created_at, updated_at)`,
-      `VALUES (${q(extraction.primaryProductId || "")}, ${q(base.planned_path)}, ${q(path.basename(base.planned_path))}, ${q(config.sourceLabel)}, ${q(config.matchedByLabel)}, 'owned', ${Number(base.file_size || 0)}, ${q(base.file_modified_at)}::timestamptz, NOW(), NOW());`,
+      `INSERT INTO ${config.dbOwnedTable} (product_id, current_path, current_file_name, file_ext, source, matched_by, status, file_size, file_modified_at, created_at, updated_at)`,
+      `VALUES (${q(extraction.primaryProductId || "")}, ${q(base.planned_path)}, ${q(path.basename(base.planned_path))}, ${q(path.extname(base.planned_path).toLowerCase())}, ${q(config.sourceLabel)}, ${q(config.matchedByLabel)}, 'owned', ${Number(base.file_size || 0)}, ${q(base.file_modified_at)}::timestamptz, NOW(), NOW());`,
       `INSERT INTO ${config.dbLogTable} (run_id, old_path, new_path, old_file_name, new_file_name, action, status, source, matched_by, note)`,
       `VALUES (${q(base.run_id)}, ${q(base.source_path)}, ${q(base.planned_path)}, ${q(base.source_file_name)}, ${q(path.basename(base.planned_path))}, 'Moved+Renamed', 'success', ${q(config.sourceLabel)}, ${q(config.matchedByLabel)}, ${q(reason)});`,
     ].join("\n");
@@ -1365,21 +1396,22 @@ function writeUsage() {
       "",
       "Options:",
       "  --input <folder>            Target folder. All subdirectories are scanned.",
-      "  --final-base <folder>       Destination base folder for matched mp4 files.",
-      "  --unmatched-dir <folder>    Destination folder for unmatched mp4 files.",
-      "  --hold-dir <folder>         Destination folder for hold mp4 files.",
+      "  --final-base <folder>       Destination base folder for matched video files.",
+      "  --unmatched-dir <folder>    Destination folder for unmatched video files.",
+      "  --hold-dir <folder>         Destination folder for hold video files.",
       "  --error-dir <folder>        Destination folder for error files.",
-      "  --inspection-dir <folder>   Destination folder for non-mp4 files.",
+      "  --inspection-dir <folder>   Destination folder for non-video files.",
       "  --log-dir <folder>          CSV log output folder.",
-      "  --limit <number>            Limit mp4 processing count. Non-mp4 files are still scanned.",
+      "  --limit <number>            Limit video processing count. Non-video files are still scanned.",
       "  --ffprobe-timeout-ms <ms>   Timeout for ffprobe-static resolution probing.",
+      "  --ignore-non-video-exts <csv>  Skip non-video files with these extensions.",
       "",
       "Notes:",
       "  - CLI args override PHASE2_FILE_PIPELINE_* values in .env.",
       "  - dry-run writes CSV only. It does not move files and does not write DB rows.",
-      "  - execute mode moves files and writes DB rows for mp4 only.",
-      "  - matched mp4 rows also write resolution metadata with ffprobe-static.",
-      "  - non-mp4 files are moved to inspection folder only. DB is not written.",
+      "  - execute mode moves files and writes DB rows for supported videos only.",
+      "  - matched video rows also write resolution metadata with ffprobe-static.",
+      "  - non-video files are moved to inspection folder only. DB is not written.",
       "  - empty directories under input folder are removed after execute.",
       "  - cross-device move (EXDEV) is blocked for safety in this version.",
       "",
@@ -1398,6 +1430,7 @@ function initSampleWorkspace(root) {
 
   const samples = [
     path.join(input, "FC2-PPV-1234567_1.mp4"),
+    path.join(input, "FC2PPV-3363283_1_1_4K.mkv"),
     path.join(nested, "fc2ppv-234567.mp4"),
     path.join(nested, "no-number-sample.mp4"),
     path.join(nested, "memo.txt"),
