@@ -1,0 +1,19 @@
+{
+  "run_id": "google_image_thumb_20260621002117_19568",
+  "mode": "export-targets",
+  "resolver": "browser",
+  "run_status": "completed",
+  "csv_path": "C:\\Users\\toyoaki\\Desktop\\filedatachange\\project_scripts\\google_image_thumbnail_logs\\google_image_thumb_20260621002117_19568_targets.csv",
+  "targets": 5,
+  "processed": 5,
+  "success": 0,
+  "failed": 0,
+  "consecutive_failures": 0,
+  "imgres_imgurl": 0,
+  "google_thumbnail_url": 0,
+  "last_product_id": "",
+  "latest_error": "",
+  "last_message": "target csv exported",
+  "started_at": "2026-06-21T00:21:18.049Z",
+  "updated_at": "2026-06-21T00:21:18.049Z"
+}

@@ -1,0 +1,19 @@
+{
+  "run_id": "google_image_thumb_20260621002746_5724",
+  "mode": "promote-dry-run",
+  "resolver": "browser",
+  "run_status": "completed",
+  "csv_path": "C:\\Users\\toyoaki\\Desktop\\filedatachange\\project_scripts\\google_image_thumbnail_logs\\google_image_thumb_20260621002159_38832_dry-run.csv",
+  "targets": 1,
+  "processed": 1,
+  "success": 1,
+  "failed": 0,
+  "consecutive_failures": 0,
+  "imgres_imgurl": 0,
+  "google_thumbnail_url": 0,
+  "last_product_id": "",
+  "latest_error": "",
+  "last_message": "",
+  "started_at": "2026-06-21T00:27:46.688Z",
+  "updated_at": "2026-06-21T00:27:46.799Z"
+}

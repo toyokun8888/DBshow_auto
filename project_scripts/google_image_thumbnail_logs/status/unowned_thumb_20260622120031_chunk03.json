@@ -1,0 +1,19 @@
+{
+  "run_id": "unowned_thumb_20260622120031_chunk03",
+  "mode": "execute",
+  "resolver": "fc2-article",
+  "run_status": "completed",
+  "csv_path": "C:\\Users\\toyoaki\\Desktop\\filedatachange\\project_scripts\\google_image_thumbnail_logs\\unowned_thumb_20260622120031_chunk03_execute.csv",
+  "targets": 1628,
+  "processed": 1628,
+  "success": 116,
+  "failed": 1512,
+  "consecutive_failures": 0,
+  "imgres_imgurl": 0,
+  "google_thumbnail_url": 0,
+  "last_product_id": "071713",
+  "latest_error": "Error:fc2_article_not_found",
+  "last_message": "",
+  "started_at": "2026-06-23T06:45:47.062Z",
+  "updated_at": "2026-06-23T09:45:51.973Z"
+}

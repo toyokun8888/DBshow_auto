@@ -1,0 +1,19 @@
+{
+  "run_id": "google_image_thumb_20260621043442_23748",
+  "mode": "dry-run",
+  "resolver": "fc2-article",
+  "run_status": "completed",
+  "csv_path": "C:\\Users\\toyoaki\\Desktop\\filedatachange\\project_scripts\\google_image_thumbnail_logs\\google_image_thumb_20260621043442_23748_dry-run.csv",
+  "targets": 3,
+  "processed": 3,
+  "success": 2,
+  "failed": 1,
+  "consecutive_failures": 1,
+  "imgres_imgurl": 0,
+  "google_thumbnail_url": 0,
+  "last_product_id": "2268762",
+  "latest_error": "Error:fc2_article_not_found",
+  "last_message": "",
+  "started_at": "2026-06-21T04:34:42.840Z",
+  "updated_at": "2026-06-21T04:34:48.186Z"
+}
