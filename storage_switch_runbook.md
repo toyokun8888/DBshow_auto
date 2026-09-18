@@ -795,3 +795,80 @@ QB_EXISTING_TORRENTS=移行する / 移行しない
 - DB移行対象の有無。
 
 この自動生成ツールを作る場合も、既定はDry-runとし、qB変更、DB更新、既存ファイル移動はそれぞれ独立した明示確認を必須にする。
+
+## 2026-09-18 RからTへの追加切替記録
+
+### 切替の目的
+
+`R:`の空き容量が少なくなったため、新しく取得・整理するFC2とuncenの書込先を`T:`へ切り替える。これは完全移行ではなく`追加切替`である。
+
+- `R:`の既存ファイルは移動・削除しない。
+- DBに登録済みの`R:`パスは書き換えない。
+- ブラウザの許可rootには`R:`と`T:`の両方を残す。
+- 新しいtorrent、Phase2、uncen日次処理だけを`T:`へ向ける。
+- qBittorrentに`R:`保存先の既存torrentがないため、今回はretargetしない。
+
+### 切替前にRの未掲載分を処理する理由
+
+新規書込先を先に`T:`へ変更すると、切替時点で`R:\hogehoge`や`R:\uncen\*_new_mp4`に残っていた当日分が、通常の`T:`向け定時処理から外れる。結果として、ファイル自体は`R:`に存在しても、DB登録やブラウザ同期が行われず、その日の作品が一覧から欠落する可能性がある。
+
+そのため、追加切替では次の順序を固定する。
+
+1. 旧rootで動いている処理の正常終了を待つ。
+2. 対象定時jobを一時退避する。
+3. 旧rootの未処理分をDry-runする。
+4. 旧rootの未処理分を本処理し、DB・ブラウザへ同期する。
+5. 旧rootの未処理件数が0になったことを再確認する。
+6. 新rootのフォルダと設定を作る。
+7. 新root向けDry-run、API、ブラウザ、再生を確認する。
+8. 最後に定時jobを復帰する。
+
+### 今回のR事前処理結果
+
+- `daily-1300-uncen-acquire`は`COMPLETE stage=stage1`を確認してから退避した。
+- FC2 Phase2 Dry-run: 動画84件、照合成功32件、未照合52件、保留0件、エラー0件。
+- FC2本実行: 照合成功32件を`R:\all_fc2`へ登録し、未照合52件を削除せず`R:\trash\unmatched`へ隔離した。
+- FC2再Dry-run: 動画0件、非動画0件。
+- `local_mp4_ids_raw`同期Dry-run: `R:\all_fc2`の未同期949件。
+- 同期本実行後: 949件追加、`remaining_missing=0`。再Dry-runも`missing=0`。
+- FC2 APIで本日分の`R:\all_fc2`パスが`localFileExists=true`で返ることを確認した。
+- uncen `stage4`: completed torrent 0件、staged 0件、failed 0件、`COMPLETE stage=stage4`。
+- uncen APIで最新R作品が`R:\uncen\...`のパス付きで返ることを確認した。
+- FC2の実ファイル1件をブラウザAPI経由で開き、HTTP 200、`mode=file`を確認した。
+- uncenのヘッドレスブラウザ試験で最新R作品`heyzo-3964`、完了候補`heyzo-3904`、console error 0件、HTTP失敗0件を確認した。
+
+### Tの今回設定値
+
+```text
+NEW_DRIVE=T:
+OLD_WRITE_DRIVE=R:
+SWITCH_MODE=追加切替
+FC2=対象
+UNCEN=対象
+QB_EXISTING_TORRENTS=移行しない（R保存先の登録0件）
+```
+
+主要な新規書込先:
+
+- FC2 input: `T:\hogehoge`
+- FC2 qB download: `T:\hogehoge\downloads`
+- FC2 final: `T:\all_fc2`
+- FC2 trash/log: `T:\trash`
+- FC2 manual import: `T:\fc2new_mp4`
+- uncen active root: `T:\uncen`
+- uncen torrent: `T:\uncen\torrent_automation`
+- uncen duplicate review: `T:\uncen\duplicate_review`
+
+`MEDIA_ALLOWED_ROOTS`、uncen UI/APIの許可root、site別許可ドライブでは`R:`を残したまま`T:`を追加する。これにより、旧R作品の一覧表示・フォルダ表示・再生を維持しつつ、新規T作品も同じブラウザで扱える。
+
+今回のT側Dry-runでは、FC2 Phase2、torrent import、ブラウザ同期がすべてT配下を示し、uncen `stage0`から`stage4`の実行計画にもR書込先がないことを確認した。`T:\fc2new_mp4\run_fc2new_mp4_T.bat`も生成し、`FINAL_BASE=T:\all_fc2`を確認した。
+
+定時job復帰後、FC2のPhase2、Sukebei、torrent importと、uncenの`stage0`から`stage4`がすべてPM2へ再登録され、予定時刻外ではPID 0の`stopped`へ戻ることを確認した。uncen各jobのPM2環境は`UNCEN_P_ROOT=T:\uncen`、`UNCEN_DUPLICATE_REVIEW_DIR=T:\uncen\duplicate_review`である。最後に`pm2 save`を実行した。
+
+### PM2再読込時の注意
+
+FC2 APIは`.env`を読むが、既存PM2プロセスに旧`MEDIA_ALLOWED_ROOTS`が残っていると、通常の`startOrReload --update-env`だけでは旧値が優先されることがある。切替後は必ず`pm2 jlist`などで対象APIの環境を確認し、旧値が残る場合は`always-thumbnail-library-api`と`always-thumbnail-library-web`だけを一度`pm2 delete`して、`ecosystem.ui.config.js`から再登録する。再登録後は、旧rootと新rootの存在しないテストパスがどちらも`path_not_allowed`ではなく`file_not_exists`になることを確認する。
+
+### 次回の注意
+
+次のストレージへ追加切替するときも、設定変更より先に旧active rootの未掲載分を処理する。旧rootのDBパスとブラウザ許可rootは、そのストレージを物理的に廃止しない限り削除しない。

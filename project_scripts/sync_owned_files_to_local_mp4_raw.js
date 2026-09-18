@@ -3,7 +3,7 @@ const path = require("path");
 const { Client } = require("pg");
 
 const PRODUCT_ID = process.env.SYNC_PRODUCT_ID || "";
-const TARGET_ROOT = process.env.SYNC_TARGET_ROOT || "R:\\all_fc2";
+const TARGET_ROOT = process.env.SYNC_TARGET_ROOT || "T:\\all_fc2";
 
 function writeLine(value = "") {
   process.stdout.write(`${value}\n`);
