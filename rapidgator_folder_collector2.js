@@ -1,5 +1,5 @@
 // ============================================================
-//  rapidgator_folder_collector.js
+//  rapidgator_folder_collector2.js
 //  Rapidgator の folder ページからファイル一覧を収集して CSV に出力する
 //
 //  【目的】
@@ -7,7 +7,7 @@
 //    - file_title / file_url / file_size / group_key などをCSV化
 //    - DBへ直接INSERTしない
 //    - CSVは5万件ごとに分割
-//    - DB投入後にSQLでクレンジング・照合する前提
+//    - project_scripts/import_rapidgator_delta.js でDBとの差分を照合・登録する
 //
 //  【今回追加した重要仕様】
 //    - 枝番判定カラムを追加
@@ -40,7 +40,11 @@
 //    rapidgator_progress_YYYYMMDDHHMMSS.csv
 //
 //  【実行方法】
-//    node rapidgator_folder_collector.js
+//    node rapidgator_folder_collector2.js --folder-id 3330879 --folder-name movie --start-page 1 --end-page 500 --output-dir tmp/rapidgator_movie_1_500
+//    node project_scripts/import_rapidgator_delta.js tmp/rapidgator_movie_1_500 --folder-id 3330879 --folder-name movie --start-page 1 --end-page 500
+//    DB登録時は同じコマンドに --execute を付ける。登録後もdry-runで new_urls=0 を確認する。
+//    1回の取得を500ページ以下に分け、master CSVを1ファイル（5万行以内）に収める。
+//    同じ出力先に複数回収集した場合は、取り込み時に --run-id YYYYMMDDHHMMSS を指定する。
 //
 //  【初回テスト推奨】
 //    TEST_MODE = true
@@ -49,6 +53,14 @@
 
 const fs = require("fs");
 const path = require("path");
+
+function cliValue(name) {
+  const index = process.argv.indexOf(name);
+  if (index < 0) return "";
+  const value = process.argv[index + 1];
+  if (!value || value.startsWith("--")) throw new Error(`Missing value for ${name}`);
+  return value;
+}
 
 const puppeteer = require("puppeteer-extra");
 const StealthPlugin = require("puppeteer-extra-plugin-stealth");
@@ -62,17 +74,17 @@ puppeteer.use(StealthPlugin());
 const BASE_URL = "https://rapidgator.net";
 
 // 対象フォルダID
-const FOLDER_ID = "3330879";//movie
+const FOLDER_ID = cliValue("--folder-id") || "3330879";//movie
 //const FOLDER_ID = "5535466";//javdaily2
 
 // 対象フォルダ名
-const FOLDER_NAME = "movie";
+const FOLDER_NAME = cliValue("--folder-name") || "movie";
 //const FOLDER_NAME = "JAVDAILY";
 // 取得開始ページ
-const START_PAGE = 6272;
+const START_PAGE = Number(cliValue("--start-page") || 6272);
 
 // 取得終了ページ
-const END_PAGE = 6278;// 2026-5-17 時点の最大ページ数
+const END_PAGE = Number(cliValue("--end-page") || 6278);// 2026-5-17 時点の最大ページ数
 //const END_PAGE = 1089;// 2026-5-14 時点の最大ページ数
 //const END_PAGE = 2056// 2026-5-14 時点の最大ページ数
 // 途中再開ページ
@@ -89,14 +101,14 @@ const TEST_MODE = false;
 const TEST_MAX_RECORDS = 300;
 
 // CSV出力先ディレクトリ
-const OUTPUT_DIR = "C:\\rapidgator_output\\run_movie6272";
+const OUTPUT_DIR = cliValue("--output-dir") || "C:\\rapidgator_output\\run_movie6272";
 
 // master CSV の1ファイルあたり最大行数
 const MAX_ROWS_PER_CSV = 50000;
 
 // アクセス待機時間
-const MIN_DELAY_MS = 2000;
-const MAX_DELAY_MS = 6000;
+const MIN_DELAY_MS = Number(cliValue("--wait-min-ms") || 2000);
+const MAX_DELAY_MS = Number(cliValue("--wait-max-ms") || 6000);
 
 // ページ取得リトライ回数
 const MAX_RETRY = 3;
@@ -119,7 +131,7 @@ const HEADLESS = true;
 //  内部設定
 // ============================================================
 
-const TS = new Date().toISOString().replace(/[-:T]/g, "").slice(0, 15);
+const TS = new Date().toISOString().replace(/\D/g, "").slice(0, 14);
 
 const ERROR_CSV = path.join(OUTPUT_DIR, `rapidgator_error_${TS}.csv`);
 const PROGRESS_CSV = path.join(OUTPUT_DIR, `rapidgator_progress_${TS}.csv`);
@@ -627,6 +639,16 @@ function writeMasterRecord(pageNumber, item) {
 // ============================================================
 
 (async () => {
+  if (!Number.isSafeInteger(START_PAGE) || !Number.isSafeInteger(END_PAGE) || START_PAGE < 1 || END_PAGE < START_PAGE) {
+    throw new Error("Invalid page range");
+  }
+  if (!/^\d+$/.test(FOLDER_ID) || !/^[A-Za-z0-9_-]+$/.test(FOLDER_NAME)) {
+    throw new Error("Invalid folder ID or name");
+  }
+  if (!Number.isSafeInteger(MIN_DELAY_MS) || !Number.isSafeInteger(MAX_DELAY_MS) ||
+      MIN_DELAY_MS < 2000 || MAX_DELAY_MS < MIN_DELAY_MS || MAX_DELAY_MS > 30000) {
+    throw new Error("Invalid wait range; minimum is 2000 ms");
+  }
   initCsvFiles();
 
   const actualStartPage = RESUME_PAGE || START_PAGE;

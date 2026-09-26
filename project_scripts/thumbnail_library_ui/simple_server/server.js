@@ -242,7 +242,7 @@ function mapSellerProductRow(row) {
         ? `/api/library/thumbnail/${row.product_id}`
         : "",
     thumbnailStatus: String(row.thumbnail_status || "unknown"),
-    isOwned: toBool(row.is_owned),
+    isOwned: toBool(row.is_owned) || toBool(row.is_library_owned),
     isLibraryOwned: toBool(row.is_library_owned),
 
     hasRapidgator: toBool(row.has_rapidgator),
@@ -305,18 +305,44 @@ async function main() {
 
       const result = await db.query(
         `
+          WITH cached_counts AS (
+            SELECT
+              seller_id,
+              seller_name,
+              COUNT(*)::integer AS total_products,
+              COUNT(*) FILTER (WHERE is_owned)::integer AS cached_owned
+            FROM xxx_tm010_seller_completion_product_cache
+            GROUP BY seller_id, seller_name
+          ), library_only AS (
+            SELECT
+              c.seller_id,
+              c.seller_name,
+              COUNT(*)::integer AS additional_owned
+            FROM (
+              SELECT DISTINCT product_id::text AS product_id
+              FROM xxx_tm002_owned_files
+              WHERE status = 'owned'
+            ) o
+            JOIN xxx_tm010_seller_completion_product_cache c
+              ON c.product_id = o.product_id
+            WHERE NOT c.is_owned
+            GROUP BY c.seller_id, c.seller_name
+          )
           SELECT
-            seller_id,
-            COALESCE(seller_name, seller_id) AS seller_name,
-            COUNT(*)::integer AS total_products,
-            COUNT(*) FILTER (WHERE is_owned)::integer AS owned_products,
-            COUNT(*) FILTER (WHERE NOT is_owned)::integer AS missing_products,
+            c.seller_id,
+            COALESCE(c.seller_name, c.seller_id) AS seller_name,
+            c.total_products,
+            (c.cached_owned + COALESCE(l.additional_owned, 0))::integer AS owned_products,
+            (c.total_products - c.cached_owned - COALESCE(l.additional_owned, 0))::integer AS missing_products,
             ROUND(
-              COUNT(*) FILTER (WHERE is_owned)::numeric / NULLIF(COUNT(*), 0) * 100,
+              (c.cached_owned + COALESCE(l.additional_owned, 0))::numeric
+                / NULLIF(c.total_products, 0) * 100,
               1
             ) AS completion_rate
-          FROM xxx_tm010_seller_completion_product_cache
-          GROUP BY seller_id, seller_name
+          FROM cached_counts c
+          LEFT JOIN library_only l
+            ON l.seller_id = c.seller_id
+              AND l.seller_name IS NOT DISTINCT FROM c.seller_name
           ORDER BY ${orderBy}
           LIMIT $1
         `,

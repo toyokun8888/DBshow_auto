@@ -361,6 +361,10 @@
   font-size: 15px;
 }
 
+.missing-product-id.owned {
+  color: #b8edc5;
+}
+
 /* mp4あり */
 .missing-product-id.available {
   color: #9bf7be;
@@ -395,6 +399,12 @@
   border-radius: 999px;
   padding: 2px 7px;
   background: #111824;
+}
+
+.missing-seller .owned-badge {
+  border-color: #628c6c;
+  color: #d2f4db;
+  background: #1e3a28;
 }
 
 .missing-actions {
@@ -493,7 +503,8 @@
    local mp4 candidate
 ========================================================= */
 
-.missing-card.local-file-exists {
+.missing-card.local-file-exists,
+.missing-card.owned {
   border-color: #4d6b57;
   background: #18231d;
 }

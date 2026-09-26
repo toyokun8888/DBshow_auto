@@ -819,3 +819,15 @@ Rapidgator Researchの右側リストは、`xxx_vq030_rapidgator_wiki_display` �
 - 実行単位の集計は `xxx_tl003_fc2_wiki_thumbnail_runs`、対象ごとの結果は `xxx_tl004_fc2_wiki_thumbnail_run_items` に保存する。
 - 既定では確認フラグが `NO` のため、実行時は `FC2_THUMB_COLLECT_CONFIRM_DOWNLOAD=YES` と `FC2_THUMB_COLLECT_CONFIRM_DB_WRITE=YES` を明示する。
 - `downloaded_at >= CURRENT_DATE` の当日成功数を見て、`FC2_THUMB_COLLECT_DAILY_CAP` 既定100件を超えない。
+
+## 2026-09-20 追記: JavArchiveによるFC2サムネイル補完
+
+FC2 Wiki側で未回収となる作品の補完として、`project_scripts/fc2_javarchive_thumbnail_collector.js` を追加した。
+
+- 一回処理はJavArchiveの `AV Uncensored` のうち画像が存在するページ1～3716を走査する。サイトの検出最終ページは5,119だが、ページ3717～5119には画像がないため探索しない。これらは回収件数上限ではない。
+- ページ3716までの走査後、DB未回収のうち「所持済み」を先に、「未所持Rapidgator候補」を次に回収する。対象件数の人工的な上限は設けない。
+- 日次処理は毎日01:00に先頭6ページを走査し、最大100件を回収する。
+- 成功時は既存の `fc2_sum` と `xxx_tm009_fc2_wiki_thumbnail_assets` を使うため、既存の `/api/library/thumbnail/{product_id}` からそのままブラウザ表示できる。
+- JavArchive側の失敗は `TM009` を `failed` にせず、`xxx_tl003_fc2_wiki_thumbnail_runs` と `xxx_tl004_fc2_wiki_thumbnail_run_items` に記録する。
+- JavArchive画像は新ホスト `img2.javstore.net` と旧ホスト `img.javstore.net` の両方を許可する。2026-09-20の初回走査で旧ホストが除外されていたため、ページ761から再走査する修正を行った。
+- 詳細な安全条件、再開方法、PM2手順は `javarchive_thumbnail_runbook.md` を参照する。

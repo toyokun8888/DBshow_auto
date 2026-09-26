@@ -13,6 +13,10 @@ const API_BASE = "http://localhost:3001";
 const OPEN_FOLDER_ENDPOINT = "/api/library/open-folder";
 const OPEN_FILE_ENDPOINT = "/api/library/open-file";
 
+function isOwnedProduct(item: MissingProduct): boolean {
+  return item.isOwned || item.isLibraryOwned;
+}
+
 export default function SellerCompletionPage() {
   const [sellers, setSellers] = useState<SellerSummary[]>([]);
   const [missingItems, setMissingItems] = useState<MissingProduct[]>([]);
@@ -259,9 +263,9 @@ export default function SellerCompletionPage() {
   const activeStats = useMemo(() => {
     return {
       thumbnails: missingItems.filter((item) => Boolean(item.thumbnailPath)).length,
-      owned: missingItems.filter((item) => item.isOwned).length,
+      owned: missingItems.filter(isOwnedProduct).length,
       libraryOwned: missingItems.filter((item) => item.isLibraryOwned).length,
-      missing: missingItems.filter((item) => !item.isOwned).length,
+      missing: missingItems.filter((item) => !isOwnedProduct(item)).length,
       rapidgator: missingItems.filter((item) => item.hasRapidgator).length,
     };
   }, [missingItems]);
@@ -479,15 +483,15 @@ export default function SellerCompletionPage() {
             ) : (
               <section className="missing-list">
                 {filteredMissingItems.map((item) => {
-                  const productIdClass = item.hasMp4
-                    ? "missing-product-id available"
-                    : item.hasRapidgator
-                      ? "missing-product-id rar-only"
-                      : "missing-product-id unavailable";
+                  const productIdClass = isOwnedProduct(item)
+                    ? "missing-product-id owned"
+                    : item.hasMp4
+                      ? "missing-product-id available"
+                      : item.hasRapidgator
+                        ? "missing-product-id rar-only"
+                        : "missing-product-id unavailable";
 
-                  const cardClass = item.localFileExists
-                    ? "missing-card local-file-exists"
-                    : "missing-card";
+                  const cardClass = `missing-card${isOwnedProduct(item) ? " owned" : ""}${item.localFileExists ? " local-file-exists" : ""}`;
 
                   const canOpenLocalFile =
                     item.localFileExists &&
@@ -518,7 +522,7 @@ export default function SellerCompletionPage() {
 
                             <div className="missing-seller">
                               {item.sellerName || item.sellerId || "seller unknown"}
-                              {item.isOwned && <span>owned</span>}
+                              {isOwnedProduct(item) && <span className="owned-badge">所持済み</span>}
                               {item.isLibraryOwned && <span>library</span>}
                               {item.thumbnailStatus && (
                                 <span>thumb: {item.thumbnailStatus}</span>

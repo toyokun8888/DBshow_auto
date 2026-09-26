@@ -15,3 +15,6 @@ node
 .DS_Store
 Thumbs.db
 /fc2_sum/
+/project_scripts/javarchive_thumbnail_logs/
+/tmp/javarchive_thumbnail_validation_*/
+/tmp/rapidgator_daily/

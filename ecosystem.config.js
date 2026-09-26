@@ -1,6 +1,37 @@
 module.exports = {
   apps: [
     {
+      name: "daily-0100-fc2-javarchive-thumbnail",
+
+      script:
+        "C:/Users/toyoaki/Desktop/filedatachange/project_scripts/pm2_scheduled_runner.js",
+
+      cwd:
+        "C:/Users/toyoaki/Desktop/filedatachange",
+
+      env: {
+        SCHEDULE_TARGET_SCRIPT:
+          "C:/Users/toyoaki/Desktop/filedatachange/project_scripts/fc2_javarchive_thumbnail_collector.js",
+        SCHEDULE_TARGET_CWD:
+          "C:/Users/toyoaki/Desktop/filedatachange",
+        SCHEDULE_HOUR: "1",
+        SCHEDULE_MINUTE: "0",
+        SCHEDULE_WINDOW_MINUTES: "10",
+        FC2_JAVARCHIVE_MODE: "daily",
+        FC2_JAVARCHIVE_CONFIRM_EXECUTE: "YES",
+        FC2_JAVARCHIVE_CONFIRM_DB_WRITE: "YES",
+        FC2_JAVARCHIVE_DAILY_PAGES: "6",
+        FC2_JAVARCHIVE_DAILY_CAP: "100",
+        FC2_JAVARCHIVE_LOCK_WAIT_MINUTES: "180"
+      },
+
+      autorestart: false,
+
+      watch: false,
+
+      cron_restart: "0 1 * * *"
+    },
+    {
       name: "daily-0300-fc2-article-collect",
 
       script:

@@ -631,6 +631,15 @@ CREATE INDEX xxx_idx_TM005_unmatched_files_current_path
 
 - `/api/rapidgator/groups` は `xxx_vq023_rapidgator_group_summary` を読む。
 - `/api/rapidgator/group/:groupKey/items` は `xxx_vq022_rapidgator_base_title_summary` を読む。
+
+#### 2026-09-23 日次差分追加の方針
+
+- 対象は `xxx_tl002_rapidgator_raw` に登録済みの7フォルダとし、フォルダ一覧をコードへ重複定義しない。
+- `file_url` を差分キーにし、先にDry-runで未登録URLを確定する。
+- 実登録時はトランザクション内でテーブルロックを取得し、ロック取得後に差分を再計算してから `INSERT` する。
+- 登録件数、重複URL、登録後の存在件数を検証し、不一致時はロールバックする。
+- 登録後に同じCSVで再度Dry-runし、`new_urls = 0` を必須とする。
+- 現行テーブルと派生ビューをそのまま利用し、今回の運用追加ではスキーマ変更、既存行の更新、既存行の削除を行わない。
 - `/api/seller-missing/:sellerId` は `xxx_vq025_rapidgator_best_links` を読む。
 
 ### 4. Seller Completion系ビューの管理対象
@@ -773,3 +782,14 @@ SELECT count(*) FROM public.xxx_tm002_owned_files WHERE status = 'owned';
 - `daily-0330-seller-cache-refresh`: 午前3時30分にUI用販売者キャッシュを更新し、最新マスター取得分を画面へ反映する。
 - `daily-2100-fc2-delta-thumbnail`: 午後9時に退避済み対象のサムネイル取得。
 - `daily-2200-seller-cache-refresh`: 午後10時にUI用販売者キャッシュを更新し、取得済みサムネイル状態を画面へ反映する。
+
+## 2026-09-20 追記: JavArchive補完回収のDB利用方針
+
+JavArchive補完回収では新規テーブルやスキーマ変更を行わず、既存の `xxx_tm009_fc2_wiki_thumbnail_assets`、`xxx_tl003_fc2_wiki_thumbnail_runs`、`xxx_tl004_fc2_wiki_thumbnail_run_items` を再利用する。
+
+- 成功時だけ `TM009.thumbnail_status = 'collected'` とし、既存の `collected` 行は条件付きUPSERTで上書きしない。
+- 失敗は `TL003` / `TL004` に記録し、JavArchiveの一時障害によって `TM009` を `failed` にしない。
+- `TM009.source_wiki_url` は既存スキーマを維持したまま、JavArchive取得時には取得元記事URLを保存する。
+- 一回処理の既存 `target_scope` 名は `javarchive_backfill_all_pages`、日次処理は `javarchive_daily` とする。前者は既存runとの互換性のため名称を維持する。
+- 一回処理の画像探索範囲はページ1～3716とする。サイトの検出最終ページは5,119だが、ページ3717～5119には画像がないため探索しない。画像の回収対象件数には人工的な上限を設けない。
+- DB書き込み前の候補SELECT、終了時の `collected` 再集計、共有advisory lockを実装する。

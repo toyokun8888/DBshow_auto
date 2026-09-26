@@ -1528,9 +1528,12 @@ CSVログファイル名:
 #### `xxx_tl002_rapidgator_raw`
 
 - 役割: Rapidgator収集結果の生ログテーブル。
-- 現行件数: 780,712件
+- 現行件数: 1,043,189件（2026-09-23確認）
 - 主な列: `global_seq`, `csv_part_no`, `file_seq`, `source_page_url`, `folder_id`, `folder_name`, `page_number`, `row_index_in_page`, `file_title`, `file_url`, `file_size`, `file_ext`, `group_key`, `group_rule`, `fc2_product_id`, `part_no`, `part_label`, `part_type`, `base_title_without_part`, `collected_at`, `inserted_at`
 - 派生ビュー: `xxx_vq020_rapidgator_group_normalized`, `xxx_vq022_rapidgator_base_title_summary`, `xxx_vq023_rapidgator_group_summary`, `xxx_vq024_rapidgator_multi_url`, `xxx_vq025_rapidgator_best_links`
+- 日次差分取得: `project_scripts/rapidgator_daily_delta.js` が、同テーブルに登録済みの全フォルダを対象にRapidgatorの末尾ページから既知URL境界までを確認する。
+- 日次登録: 収集CSVを `project_scripts/import_rapidgator_delta.js` でDry-runし、`file_url` が未登録の行だけを既存テーブルへ追加する。登録後は同じCSVでもう一度Dry-runし、`new_urls = 0` を確認する。
+- 実行ログ: `tmp/rapidgator_daily/rapidgator_daily_YYYYMMDDHHMMSS/status.json` とフォルダ別CSVに残す。DBスキーマの追加や既存行の更新・削除は行わない。
 
 #### `xxx_vq020_rapidgator_group_normalized`
 
@@ -1633,3 +1636,15 @@ CSVログファイル名:
 - 結合キー: `fc2_product_id = product_id`
 - 主な追加列: `wiki_seller_id`, `wiki_seller_name`, `wiki_display_title`, `thumbnail_url`, `local_thumbnail_path`, `thumbnail_status`, `has_local_thumbnail`
 - UI用途: `/api/rapidgator/group/:groupKey/items` がこのビューを読み、右側リストに販売者名と取得済みサムネイルを表示する。
+
+## 2026-09-20 追記: JavArchiveサムネイル補完で使うDB
+
+JavArchive補完回収はDBスキーマを追加せず、次の既存オブジェクトを使う。
+
+- `xxx_tm009_fc2_wiki_thumbnail_assets`: 成功した画像のURL、ローカルパス、`collected` 状態を保存する。既存の正常な `collected` 行は上書きしない。
+- `xxx_tl003_fc2_wiki_thumbnail_runs`: `javarchive_backfill_all_pages` または `javarchive_daily` の実行単位を記録する。`javarchive_backfill_all_pages` は既存runとの互換名であり、2026-09-20の一回処理では画像が存在するページ1～3716を探索する。
+- `xxx_tl004_fc2_wiki_thumbnail_run_items`: 作品ごとの成功、既存、スキップ、失敗、試行回数、理由を記録する。
+- `xxx_vq002_owned_product_ids`, `xxx_vq029_owned_file_thumbnail_status`: 所持済み優先の判定に使う。
+- `xxx_vq025_rapidgator_best_links`: 未所持Rapidgator候補の判定に使う。
+
+JavArchiveで失敗した作品は `TM009` を `failed` に変更しない。失敗は `TL003` / `TL004` だけに残し、FC2 Wiki側の回収経路を維持する。既存列 `source_wiki_url` には、JavArchive回収時は取得元記事URLを保存する。

@@ -121,6 +121,42 @@ pm2 start ecosystem.ui.config.js
 pm2 save
 ```
 
+## 2026-09-20 追記: JavArchiveサムネイル補完
+
+日次ジョブ `daily-0100-fc2-javarchive-thumbnail` は、毎日01:00にJavArchiveの先頭6ページを確認し、最大100件を回収する。
+
+一回処理 `once-fc2-javarchive-backfill` は、実行時点の全ページを走査する。2026-09-20の事前確認は5,118ページ、実行開始時は5,119ページであり、回収件数上限ではない。
+
+登録順は次のとおり。
+
+```powershell
+pm2 start ecosystem.config.js --only daily-0100-fc2-javarchive-thumbnail
+pm2 save
+pm2 start ecosystem.javarchive-backfill.config.js
+```
+
+一回処理を開始した後は `pm2 save` を実行しない。一回処理をPC再起動後の復元対象に入れないためである。詳細は `javarchive_thumbnail_runbook.md` を参照する。
+
+## 2026-09-23 追記: Rapidgator日次差分収集
+
+日次ジョブ `daily-0430-rapidgator-delta` は、毎日04:30にDB登録済みの全7フォルダを確認し、未登録のRapidgatorファイルURLだけを `xxx_tl002_rapidgator_raw` へ追加する。
+
+設定ファイルと登録コマンドは次のとおり。
+
+```powershell
+pm2 start ecosystem.rapidgator-daily.config.js
+pm2 describe daily-0430-rapidgator-delta
+```
+
+2026-09-23の登録時は `once-fc2-javarchive-backfill` が実行中だったため、通常の `pm2 save` は使用していない。次の専用スクリプトで、既存のPM2復元ファイルへRapidgator日次ジョブだけを追加した。
+
+```powershell
+node project_scripts\save_rapidgator_pm2_process.js
+node project_scripts\save_rapidgator_pm2_process.js --execute
+```
+
+保存後のPM2復元ファイルには `daily-0430-rapidgator-delta` が含まれ、`once-fc2-javarchive-backfill` は含まれない。詳細は `rapidgator_daily_runbook.md` を参照する。
+
 ## 個別に起動したい場合
 
 `ecosystem` 内の一部だけ起動したい場合は、`--only` を使います。
@@ -161,4 +197,3 @@ pm2 logs always-thumbnail-library-web
 ```powershell
 pm2 save
 ```
-
